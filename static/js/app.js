@@ -39,9 +39,14 @@
     progressOverlay: $("progressOverlay"),
     progressRole: $("progressRole"),
     progressName: $("progressName"),
+    progressSub: $("progressSub"),
     progressPct: $("progressPct"),
+    progressEta: $("progressEta"),
+    progressBytes: $("progressBytes"),
     progressSpeed: $("progressSpeed"),
     progressRing: $("progressRing"),
+    progressCancelBtn: $("progressCancelBtn"),
+    progressCancelAction: $("progressCancelAction"),
   };
 
   const fmtBytes = (bytes) => {
@@ -62,7 +67,7 @@
     const doApply = () => {
       document.documentElement.classList.toggle("dark", dark);
       const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute("content", dark ? "#030712" : "#eef2ff");
+      if (meta) meta.setAttribute("content", dark ? "#030712" : "#f8fafc");
     };
 
     if (!animate) {
@@ -70,58 +75,39 @@
       return;
     }
 
-    // Silk-smooth animated transition
+    // Silk-smooth scoped CSS transition without layout thrashing
     document.documentElement.classList.add("theme-transitioning");
-
-    if (typeof document.startViewTransition === "function") {
-      try {
-        document.startViewTransition(() => {
-          doApply();
-        });
-      } catch (e) {
-        doApply();
-      }
-    } else {
-      doApply();
-    }
+    doApply();
 
     clearTimeout(themeTransitionTimer);
     themeTransitionTimer = setTimeout(() => {
       document.documentElement.classList.remove("theme-transitioning");
-    }, 480);
+    }, 450);
   }
 
   function initTheme() {
     let stored = null;
-    try { stored = localStorage.getItem("beamly-theme"); } catch (e) { /* private mode */ }
-    const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    try { stored = localStorage.getItem("beamly-theme-v2"); } catch (e) { /* private mode */ }
 
-    followSystemTheme = stored !== "dark" && stored !== "light";
-    const initialDark = followSystemTheme ? (mq ? mq.matches : false) : stored === "dark";
-    applyTheme(initialDark, false);
+    // Beamly signature aesthetic is Dark mode by default unless explicitly set to "light"
+    const isDark = stored !== "light";
+    applyTheme(isDark, false);
 
     const toggleBtn = $("themeToggle");
     if (toggleBtn) {
       toggleBtn.addEventListener("click", () => {
-        const isDark = !document.documentElement.classList.contains("dark");
-        applyTheme(isDark, true);
-        followSystemTheme = false;
-        try { localStorage.setItem("beamly-theme", isDark ? "dark" : "light"); } catch (e) { /* private mode */ }
+        const currentlyDark = document.documentElement.classList.contains("dark");
+        const nextDark = !currentlyDark;
+        applyTheme(nextDark, true);
+        try { localStorage.setItem("beamly-theme-v2", nextDark ? "dark" : "light"); } catch (e) { /* private mode */ }
+        playChime("notice");
       });
-    }
-
-    const onSystemChange = (e) => {
-      if (followSystemTheme) applyTheme(e.matches, true);
-    };
-    if (mq) {
-      if (typeof mq.addEventListener === "function") mq.addEventListener("change", onSystemChange);
-      else if (typeof mq.addListener === "function") mq.addListener(onSystemChange);
     }
   }
 
-  /* ---- Luxury acoustic notification chime (Web Audio synthesis) ----
-     Multi-frequency crystalline chord with low-pass acoustic filtering
-     and soft exponential decay envelope (no harsh buzz). */
+  /* ---- Luxury acoustic sound engine (Web Audio synthesis) ----
+     Warm acoustic filtered harmonics with soft exponential attack and
+     silky decay envelopes — calm, smooth, organic (no harsh treble buzzing). */
   let audioCtx = null;
 
   function ensureAudio() {
@@ -145,28 +131,94 @@
     if (!ctx) return;
     try {
       const t0 = ctx.currentTime + 0.015;
-      const isIncoming = type === "incoming";
 
-      // Warm acoustic low-pass filter
+      // Master acoustic filter: warm low-pass removing harsh digital transients
       const filter = ctx.createBiquadFilter();
       filter.type = "lowpass";
-      filter.frequency.setValueAtTime(isIncoming ? 3400 : 2800, t0);
-      filter.Q.setValueAtTime(1.1, t0);
 
       const masterGain = ctx.createGain();
-      masterGain.gain.setValueAtTime(0.9, t0);
-
       filter.connect(masterGain);
       masterGain.connect(ctx.destination);
 
-      if (isIncoming) {
-        // Uplifting ascending chime chord: F5 (698Hz) -> A5 (880Hz) -> C6 (1046Hz) -> E6 (1318Hz) + C7 sparkle
+      if (type === "send_complete" || type === "success") {
+        // Ultra-calm, velvety smooth luxury bloom: F3 (174Hz) -> C4 (261Hz) -> A4 (440Hz) -> C5 (523Hz) -> E5 (659Hz)
+        filter.frequency.setValueAtTime(1400, t0);
+        filter.Q.setValueAtTime(0.8, t0);
+        masterGain.gain.setValueAtTime(0.85, t0);
+
         const notes = [
-          { freq: 698.46, at: 0.00, dur: 0.65, peak: 0.18, type: "sine" },
-          { freq: 880.00, at: 0.09, dur: 0.70, peak: 0.20, type: "triangle" },
-          { freq: 1046.50, at: 0.18, dur: 0.85, peak: 0.24, type: "sine" },
-          { freq: 1318.51, at: 0.27, dur: 0.95, peak: 0.20, type: "sine" },
-          { freq: 2093.00, at: 0.32, dur: 0.55, peak: 0.09, type: "sine" },
+          { freq: 174.61, at: 0.00, dur: 1.35, peak: 0.12, type: "sine" },
+          { freq: 261.63, at: 0.04, dur: 1.25, peak: 0.15, type: "sine" },
+          { freq: 440.00, at: 0.10, dur: 1.15, peak: 0.14, type: "sine" },
+          { freq: 523.25, at: 0.16, dur: 1.05, peak: 0.11, type: "sine" },
+          { freq: 659.25, at: 0.22, dur: 0.95, peak: 0.07, type: "sine" },
+        ];
+
+        notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = oscType;
+          osc.frequency.setValueAtTime(freq, t0 + at);
+          gain.gain.setValueAtTime(0.0001, t0 + at);
+          gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.045);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+          osc.connect(gain);
+          gain.connect(filter);
+          osc.start(t0 + at);
+          osc.stop(t0 + at + dur + 0.08);
+        });
+      } else if (type === "send_start") {
+        // Gentle ambient swell: peaceful ascending breath
+        filter.frequency.setValueAtTime(1100, t0);
+        filter.Q.setValueAtTime(0.7, t0);
+        masterGain.gain.setValueAtTime(0.65, t0);
+
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(320, t0);
+        osc.frequency.exponentialRampToValueAtTime(480, t0 + 0.45);
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.07, t0 + 0.18);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
+        osc.connect(gain);
+        gain.connect(filter);
+        osc.start(t0);
+        osc.stop(t0 + 0.60);
+      } else if (type === "incoming") {
+        // Calm soothing dual-phase glass marimba: G4 (392Hz) + D5 (587Hz) -> B4 (493Hz) + G5 (784Hz)
+        filter.frequency.setValueAtTime(1500, t0);
+        filter.Q.setValueAtTime(1.0, t0);
+        masterGain.gain.setValueAtTime(0.85, t0);
+
+        const notes = [
+          { freq: 392.00, at: 0.00, dur: 0.85, peak: 0.15, type: "sine" },
+          { freq: 587.33, at: 0.02, dur: 0.75, peak: 0.12, type: "sine" },
+          { freq: 493.88, at: 0.15, dur: 0.95, peak: 0.14, type: "sine" },
+          { freq: 783.99, at: 0.17, dur: 0.85, peak: 0.09, type: "sine" },
+        ];
+        notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = oscType;
+          osc.frequency.setValueAtTime(freq, t0 + at);
+          gain.gain.setValueAtTime(0.0001, t0 + at);
+          gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.035);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+          osc.connect(gain);
+          gain.connect(filter);
+          osc.start(t0 + at);
+          osc.stop(t0 + at + dur + 0.06);
+        });
+      } else {
+        // Soft subtle water-droplet / acoustic glass tap
+        filter.frequency.setValueAtTime(1800, t0);
+        filter.Q.setValueAtTime(1.0, t0);
+        masterGain.gain.setValueAtTime(0.75, t0);
+
+        const notes = [
+          { freq: 440.00, at: 0.00, dur: 0.45, peak: 0.13, type: "sine" },
+          { freq: 880.00, at: 0.02, dur: 0.38, peak: 0.07, type: "sine" },
         ];
         notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
           const osc = ctx.createOscillator();
@@ -175,26 +227,6 @@
           osc.frequency.setValueAtTime(freq, t0 + at);
           gain.gain.setValueAtTime(0.0001, t0 + at);
           gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.025);
-          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
-          osc.connect(gain);
-          gain.connect(filter);
-          osc.start(t0 + at);
-          osc.stop(t0 + at + dur + 0.05);
-        });
-      } else {
-        // Silky crystalline notification tap: C6 (1046Hz) + G6 (1568Hz) + C7 harmonic
-        const notes = [
-          { freq: 1046.50, at: 0.00, dur: 0.48, peak: 0.16, type: "sine" },
-          { freq: 1567.98, at: 0.04, dur: 0.55, peak: 0.14, type: "triangle" },
-          { freq: 2093.00, at: 0.06, dur: 0.38, peak: 0.07, type: "sine" },
-        ];
-        notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = oscType;
-          osc.frequency.setValueAtTime(freq, t0 + at);
-          gain.gain.setValueAtTime(0.0001, t0 + at);
-          gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.018);
           gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
           osc.connect(gain);
           gain.connect(filter);
@@ -237,7 +269,6 @@
     }
 
     document.body.dataset.mode = m;
-    try { localStorage.setItem("beamly-mode", m); } catch (e) { /* private mode */ }
     const tS = $("tabSend"), tR = $("tabReceive");
     const pS = $("panel-send"), pR = $("panel-receive");
     if (!tS || !tR || !pS || !pR) return;
@@ -265,11 +296,10 @@
   function initTabs() {
     const tS = $("tabSend"), tR = $("tabReceive");
     if (!tS || !tR) return;
-    let initial = "send";
-    try { initial = localStorage.getItem("beamly-mode") === "receive" ? "receive" : "send"; } catch (e) { /* private mode */ }
+    try { localStorage.removeItem("beamly-mode"); } catch (_) {}
     tS.addEventListener("click", () => setMode("send", "right"));
     tR.addEventListener("click", () => setMode("receive", "left"));
-    setMode(initial);
+    setMode("send");
   }
 
   /* ---- 1-2-3 step tracker ---- */
@@ -453,6 +483,25 @@
     });
 
     syncSendDock();
+    updateSteps();
+  }
+
+  /* Deselect currently selected device: returns selection to non-selected */
+  function deselectTarget() {
+    state.target = null;
+    if (ui.dockTarget) {
+      ui.dockTarget.value = "";
+    }
+    document.querySelectorAll(".peer-card").forEach((el) => {
+      el.classList.remove("selected");
+      const sub = el.querySelector(".text-xs");
+      const isOnline = el.dataset.online !== "false";
+      if (sub) {
+        sub.textContent = !isOnline ? "Offline" : "Ready to receive";
+      }
+    });
+    syncSendDock();
+    updateSteps();
   }
 
   function clearQueue() {
@@ -464,7 +513,11 @@
   function syncSendDock() {
     const hasFiles = state.queue.length > 0;
     const total = state.queue.reduce((sum, f) => sum + f.size, 0);
-    state.target = ui.dockTarget ? ui.dockTarget.value || null : state.target;
+
+    // Sync dockTarget select element to current state.target (do NOT wipe state.target!)
+    if (ui.dockTarget && state.target) {
+      ui.dockTarget.value = state.target;
+    }
 
     if (hasFiles && !state.sending) {
       const n = state.queue.length;
@@ -485,18 +538,31 @@
   }
 
   function initDock() {
-    ui.dockTarget.addEventListener("change", () => {
-      const value = ui.dockTarget.value;
-      if (value) {
-        selectTarget(value);
-      } else {
-        state.target = null;
-        syncSendDock();
-      }
-    });
-    ui.dockSendBtn.addEventListener("click", () => {
-      if (state.target) window.Beamly.net.sendAll(state.target);
-    });
+    if (ui.dockTarget) {
+      ui.dockTarget.addEventListener("change", () => {
+        const value = ui.dockTarget.value;
+        if (value) {
+          selectTarget(value);
+        } else {
+          deselectTarget();
+        }
+      });
+    }
+    if (ui.dockSendBtn) {
+      ui.dockSendBtn.addEventListener("click", () => {
+        if (!state.target) {
+          showToast("Please select a nearby device to beam to.");
+          return;
+        }
+        if (!state.queue || state.queue.length === 0) {
+          showToast("Please select or drop files to beam.");
+          return;
+        }
+        if (window.Beamly.net && window.Beamly.net.sendAll) {
+          window.Beamly.net.sendAll(state.target);
+        }
+      });
+    }
   }
 
   /* ---- File queue ---- */
@@ -611,36 +677,143 @@
     toastTimer = setTimeout(() => { decline(); }, timeout);
   }
 
-  function hideToast() {
-    if (ui.toast.classList.contains("hidden") && !ui.toast.classList.contains("leaving")) return;
+  function hideToast(immediate = false) {
+    if (!ui.toast) return;
     clearToastTimers();
+    // Immediately invalidate actions so no click can accept after cancellation
+    const acceptBtn = $("acceptBtn");
+    const declineBtn = $("declineBtn");
+    if (acceptBtn) acceptBtn.onclick = null;
+    if (declineBtn) declineBtn.onclick = null;
+    if (ui.toastActions) ui.toastActions.style.display = "none";
+
+    if (immediate) {
+      ui.toast.classList.remove("leaving");
+      ui.toast.classList.add("hidden");
+      if (toastExitTimer) {
+        clearTimeout(toastExitTimer);
+        toastExitTimer = null;
+      }
+      return;
+    }
+
+    if (ui.toast.classList.contains("hidden") && !ui.toast.classList.contains("leaving")) return;
     ui.toast.classList.add("leaving");
     toastExitTimer = setTimeout(() => {
       ui.toast.classList.add("hidden");
       ui.toast.classList.remove("leaving");
-      $("acceptBtn").onclick = null;
-      $("declineBtn").onclick = null;
       toastExitTimer = null;
     }, TOAST_EXIT_MS);
   }
 
   /* ---- Progress overlay ---- */
-  function showProgress(role, name) {
-    ui.progressRole.textContent = role;
-    ui.progressName.textContent = name;
-    setProgress(0, 0);
-    ui.progressOverlay.classList.remove("hidden");
+  const RING_CIRCUMFERENCE = 326.73;
+  let onCancelTransferCallback = null;
+
+  function setOnCancelTransfer(fn) {
+    onCancelTransferCallback = fn;
   }
 
-  function setProgress(pct, speedBytesPerSec) {
+  function cancelCurrentTransfer() {
+    hideToast(true);
+    if (typeof onCancelTransferCallback === "function") {
+      try { onCancelTransferCallback(); } catch (_) {}
+    }
+    hideProgress();
+  }
+
+  let smoothedEta = null;
+  let lastEtaTimestamp = 0;
+
+  function showProgress(role, name, subText = "Beam in progress…") {
+    smoothedEta = null;
+    lastEtaTimestamp = 0;
+    if (ui.progressRole) ui.progressRole.textContent = role;
+    if (ui.progressName) {
+      ui.progressName.textContent = name;
+      ui.progressName.title = name;
+    }
+    if (ui.progressSub) ui.progressSub.textContent = subText;
+    setProgress(0, 0, 0, 0, null);
+    if (ui.progressOverlay) {
+      ui.progressOverlay.classList.remove("hidden");
+      ui.progressOverlay.style.display = "grid";
+    }
+    document.body.classList.add("modal-open");
+  }
+
+  function setProgress(pct, speedBytesPerSec, loadedBytes = 0, totalBytes = 0, etaSec = null) {
     const pctClamped = Math.max(0, Math.min(100, pct));
-    ui.progressPct.textContent = `${Math.round(pctClamped)}%`;
-    ui.progressRing.style.strokeDashoffset = String(276.46 * (1 - pctClamped / 100));
-    ui.progressSpeed.textContent = speedBytesPerSec ? fmtSpeed(speedBytesPerSec) : "—";
+    const now = performance.now();
+    if (ui.progressPct) {
+      ui.progressPct.textContent = `${Math.round(pctClamped)}%`;
+    }
+    if (ui.progressRing) {
+      ui.progressRing.style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - pctClamped / 100));
+    }
+    if (ui.progressSpeed) {
+      ui.progressSpeed.textContent = speedBytesPerSec && speedBytesPerSec > 0 ? `⚡ ${fmtSpeed(speedBytesPerSec)}` : "—";
+    }
+    if (ui.progressBytes) {
+      if (totalBytes > 0) {
+        ui.progressBytes.textContent = `${fmtBytes(loadedBytes)} / ${fmtBytes(totalBytes)}`;
+      } else if (loadedBytes > 0) {
+        ui.progressBytes.textContent = fmtBytes(loadedBytes);
+      } else {
+        ui.progressBytes.textContent = "0 B / 0 B";
+      }
+    }
+    if (ui.progressEta) {
+      if (etaSec != null && Number.isFinite(etaSec) && etaSec >= 0 && pctClamped < 100) {
+        if (smoothedEta === null || !lastEtaTimestamp) {
+          smoothedEta = etaSec;
+        } else {
+          const dt = (now - lastEtaTimestamp) / 1000;
+          const predicted = Math.max(0, smoothedEta - dt);
+          // Stabilize: 80% weight on steady tick-down, 20% on new instant speed reading
+          smoothedEta = predicted * 0.8 + etaSec * 0.2;
+        }
+        lastEtaTimestamp = now;
+
+        const displayEta = Math.max(1, Math.round(smoothedEta));
+        if (displayEta < 60) {
+          ui.progressEta.textContent = `${displayEta}s left`;
+        } else {
+          const m = Math.floor(displayEta / 60);
+          const s = displayEta % 60;
+          ui.progressEta.textContent = s > 0 ? `${m}m ${s}s left` : `${m}m left`;
+        }
+      } else {
+        smoothedEta = null;
+        lastEtaTimestamp = 0;
+        const isComplete = ui.progressRole && ui.progressRole.textContent === "Complete";
+        ui.progressEta.textContent = pctClamped >= 100 ? (isComplete ? "Done" : "Finishing…") : "—";
+      }
+    }
   }
 
   function hideProgress() {
-    ui.progressOverlay.classList.add("hidden");
+    smoothedEta = null;
+    lastEtaTimestamp = 0;
+    if (ui.progressOverlay) {
+      ui.progressOverlay.classList.add("hidden");
+      ui.progressOverlay.style.display = "none";
+    }
+    document.body.classList.remove("modal-open");
+  }
+
+  function initProgressOverlay() {
+    if (ui.progressCancelBtn) {
+      ui.progressCancelBtn.addEventListener("click", cancelCurrentTransfer);
+    }
+    if (ui.progressCancelAction) {
+      ui.progressCancelAction.addEventListener("click", cancelCurrentTransfer);
+    }
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && ui.progressOverlay && !ui.progressOverlay.classList.contains("hidden")) {
+        cancelCurrentTransfer();
+      }
+    });
   }
 
   /* ---- Public API ---- */
@@ -648,12 +821,18 @@
     ui,
     state,
     fmtBytes,
+    fmtSpeed,
+    playChime,
+    deselectTarget,
+    setOnCancelTransfer,
+    cancelCurrentTransfer,
     init() {
       initTheme();
       initAudioUnlock();
       initDock();
       initDropzone();
       initTabs();
+      initProgressOverlay();
       setStatus("connecting");
       updateSteps();
       const rescan = $("rescanBtn");

@@ -1,34 +1,33 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#030712" />
-  <title>Beamly — Instant P2P File Transfer</title>
+  <title>Beamly</title>
   <meta name="description" content="Beamly — zero-install instant P2P file beaming over your local network." />
   <script>
-    /* Immediate browser theme sync to prevent layout/color flash */
+    /* Immediate browser theme sync: Dark mode is Beamly's signature default */
     (function () {
       try {
-        const stored = localStorage.getItem('beamly-theme');
-        const systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const isDark = stored ? stored === 'dark' : systemDark;
-        if (isDark) {
-          document.documentElement.classList.add('dark');
-        } else {
+        const stored = localStorage.getItem('beamly-theme-v2');
+        if (stored === 'light') {
           document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
         }
-      } catch (e) {}
+      } catch (e) {
+        document.documentElement.classList.add('dark');
+      }
     })();
   </script>
   <link rel="icon" type="image/png" href="images/beamly-logo.png" />
   <link rel="apple-touch-icon" href="images/beamly-logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
-    rel="stylesheet"
-  />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -43,8 +42,9 @@
       },
     };
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=12" />
+  <link rel="stylesheet" href="css/styles.css?v=55" />
 </head>
+
 <body class="font-sans" data-mode="send">
   <!-- Ambient background -->
   <div class="aurora dark-aurora" aria-hidden="true"></div>
@@ -71,8 +71,22 @@
         <button id="themeToggle" class="theme-toggle" title="Switch Theme" aria-label="Toggle theme">
           <span class="toggle-glow" aria-hidden="true"></span>
           <span class="toggle-knob" aria-hidden="true">
-            <svg id="iconMoon" class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            <svg id="iconSun" class="icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg id="iconMoon" class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+            <svg id="iconSun" class="icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5" />
+              <line x1="12" y1="1" x2="12" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="23" />
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+              <line x1="1" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="12" x2="23" y2="12" />
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            </svg>
           </span>
         </button>
       </div>
@@ -98,11 +112,21 @@
     <div class="mode-tabs anim-rise" role="tablist" aria-label="Mode">
       <span class="tab-glider" aria-hidden="true"></span>
       <button id="tabSend" class="mode-tab" role="tab" aria-selected="true" aria-controls="panel-send">
-        <svg class="tab-icon tab-icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        <svg class="tab-icon tab-icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13" />
+          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        </svg>
         <span>Send</span>
       </button>
       <button id="tabReceive" class="mode-tab" role="tab" aria-selected="false" aria-controls="panel-receive">
-        <svg class="tab-icon tab-icon-rx" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+        <svg class="tab-icon tab-icon-rx" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+          <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+          <line x1="12" y1="20" x2="12.01" y2="20" />
+        </svg>
         <span>Receive</span>
       </button>
     </div>
@@ -115,8 +139,17 @@
           <input type="file" id="fileInput" multiple class="hidden" />
           <div class="dropzone-inner">
             <div class="drop-icon">
-              <svg class="drop-svg-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              <svg class="drop-svg-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <svg class="drop-svg-main" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <svg class="drop-svg-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
             </div>
             <div class="drop-text-group">
               <p class="drop-title" id="dropTitle">Drop files here</p>
@@ -131,7 +164,11 @@
           <div class="nearby-head">
             <p class="section-title">Nearby devices</p>
             <button id="rescanBtn" class="btn-ghost btn-xs" title="Scan again">
-              <svg class="h-3.5 w-3.5 spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              <svg class="h-3.5 w-3.5 spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
               Rescan
             </button>
           </div>
@@ -140,7 +177,8 @@
       </section>
 
       <!-- Receive mode: dedicated Ready-to-Receive status view with Apple/Samsung pro beacon -->
-      <section id="panel-receive" class="view glass rx-view" role="tabpanel" aria-labelledby="tabReceive" tabindex="0" hidden>
+      <section id="panel-receive" class="view glass rx-view" role="tabpanel" aria-labelledby="tabReceive" tabindex="0"
+        hidden>
         <h2 class="rx-title">Ready to <span class="logo-gradient">Receive</span></h2>
         <div class="rx-pills">
           <span class="rx-pill"><span class="rx-dot" aria-hidden="true"></span>Discoverable on local Wi-Fi</span>
@@ -203,11 +241,18 @@
           <select id="dockTarget" class="dock-select" aria-label="Select device">
             <option value="">Select device…</option>
           </select>
-          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
         </div>
       </div>
       <button id="dockSendBtn" class="btn-primary btn-send" disabled>
-        <svg class="h-4 w-4 send-plane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        <svg class="h-4 w-4 send-plane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13" />
+          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        </svg>
         <span id="dockSendLabel">Send</span>
       </button>
     </div>
@@ -230,20 +275,76 @@
   </div>
 
   <!-- Transfer progress overlay -->
-  <div id="progressOverlay" class="overlay hidden">
+  <div id="progressOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="progressName">
     <div class="glass progress-card">
-      <p class="progress-role" id="progressRole">Sending</p>
-      <p class="progress-name" id="progressName">—</p>
-      <svg class="progress-ring-svg" viewBox="0 0 100 100" aria-hidden="true">
-        <circle class="ring-bg" cx="50" cy="50" r="44" fill="none" stroke-width="8" />
-        <circle id="progressRing" class="ring-fg" cx="50" cy="50" r="44" fill="none" stroke-width="8" stroke-dasharray="276.46" stroke-dashoffset="276.46" stroke-linecap="round" />
-      </svg>
-      <p class="font-display progress-num" id="progressPct">0%</p>
-      <p class="progress-speed" id="progressSpeed">—</p>
+      <div class="progress-header">
+        <span class="progress-badge">
+          <span class="progress-pulse-dot" aria-hidden="true"></span>
+          <span id="progressRole">Beaming</span>
+        </span>
+        <button id="progressCancelBtn" class="progress-close-btn" type="button" aria-label="Cancel transfer" title="Cancel transfer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="progress-file-info">
+        <p class="progress-name" id="progressName" title="Preparing…">—</p>
+        <p class="progress-sub" id="progressSub">Connecting to peer…</p>
+      </div>
+
+      <!-- Concentric progress visual with centered percentage and ETA -->
+      <div class="progress-dial-wrap">
+        <div class="progress-dial-aura" aria-hidden="true"></div>
+        <svg class="progress-ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+          <defs>
+            <linearGradient id="beamGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#38bdf8" />
+              <stop offset="50%" stop-color="#818cf8" />
+              <stop offset="100%" stop-color="#c084fc" />
+            </linearGradient>
+            <filter id="ringGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+          <circle class="ring-bg" cx="60" cy="60" r="52" fill="none" stroke-width="8" />
+          <circle id="progressRing" class="ring-fg" cx="60" cy="60" r="52" fill="none" stroke-width="8" stroke-dasharray="326.73" stroke-dashoffset="326.73" stroke-linecap="round" stroke="url(#beamGradient)" filter="url(#ringGlow)" />
+        </svg>
+
+        <div class="progress-dial-center">
+          <p class="font-display progress-num" id="progressPct">0%</p>
+          <p class="progress-eta" id="progressEta">—</p>
+        </div>
+      </div>
+
+      <!-- Detailed transfer metrics: transferred / total bytes & live speed -->
+      <div class="progress-metrics">
+        <div class="progress-metric-item">
+          <span class="metric-label">Transferred</span>
+          <span class="metric-val" id="progressBytes">0 B / 0 B</span>
+        </div>
+        <div class="progress-metric-divider" aria-hidden="true"></div>
+        <div class="progress-metric-item">
+          <span class="metric-label">Speed</span>
+          <span class="metric-val metric-speed" id="progressSpeed">—</span>
+        </div>
+      </div>
+
+      <div class="progress-actions">
+        <button id="progressCancelAction" class="btn-cancel-transfer" type="button" aria-label="Cancel Beam">
+          <svg class="cancel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9.5"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+          <span>Cancel Beam</span>
+        </button>
+      </div>
     </div>
   </div>
 
-  <script src="js/app.js?v=12"></script>
-  <script src="js/network.js?v=12"></script>
+  <script src="js/app.js?v=55"></script>
+  <script src="js/network.js?v=55"></script>
 </body>
+
 </html>

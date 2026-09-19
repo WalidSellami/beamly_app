@@ -12,6 +12,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import ClientDisconnect
 from urllib.parse import quote
 
 from pydantic import BaseModel
@@ -32,11 +33,12 @@ class NoCacheHTMLMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(NoCacheHTMLMiddleware)
 
-RAM_BUFFER_LIMIT = int(os.environ.get("BEAMLY_RAM_LIMIT", 256 * 1024 * 1024))  # 256 MB
+RAM_BUFFER_LIMIT = int(os.environ.get("BEAMLY_RAM_LIMIT", 512 * 1024 * 1024))  # 512 MB RAM buffer for ultra-fast Gigabit throughput
 TRANSFER_TTL_SECONDS = 300  # 5 minutes
 HEARTBEAT_INTERVAL = 4
 HEARTBEAT_TIMEOUT = 12
-UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
+UPLOAD_CHUNK_SIZE = int(os.environ.get("BEAMLY_CHUNK_SIZE", 8 * 1024 * 1024))  # 8 MB high-speed streaming chunk buffer
+PROGRESS_BROADCAST_INTERVAL = float(os.environ.get("BEAMLY_PROGRESS_INTERVAL", 0.35))  # 350ms: optimal Wi-Fi airtime balance
 
 
 class TransferRequest(BaseModel):
@@ -70,14 +72,28 @@ class BatchTransferResponse(BaseModel):
     accept: bool
 
 
+class CancelTransferRequest(BaseModel):
+    batch_id: Optional[str] = None
+    transfer_id: Optional[str] = None
+    sender_ip: Optional[str] = None
+    target_ip: Optional[str] = None
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active_connections: Dict[str, WebSocket] = {}
+        self.connection_locks: Dict[str, asyncio.Lock] = {}
         self.peer_info: Dict[str, dict] = {}
 
     async def connect(self, client_ip: str, websocket: WebSocket) -> None:
         await websocket.accept()
+        old_ws = self.active_connections.get(client_ip)
         self.active_connections[client_ip] = websocket
+        if old_ws is not None and old_ws is not websocket:
+            try:
+                await old_ws.close()
+            except Exception:
+                pass
         now = time.time()
         self.peer_info[client_ip] = {
             "ip": client_ip,
@@ -87,8 +103,12 @@ class ConnectionManager:
             "offline_since": None,
         }
 
-    def disconnect(self, client_ip: str) -> None:
+    def disconnect(self, client_ip: str, websocket: Optional[WebSocket] = None) -> None:
+        if websocket is not None and self.active_connections.get(client_ip) is not websocket:
+            return
         self.active_connections.pop(client_ip, None)
+        clean_ip = client_ip.replace("::ffff:", "")
+        self.connection_locks.pop(clean_ip, None)
         if client_ip in self.peer_info:
             self.peer_info[client_ip]["online"] = False
             self.peer_info[client_ip]["offline_since"] = time.time()
@@ -98,19 +118,32 @@ class ConnectionManager:
             self.peer_info[client_ip]["last_seen"] = time.time()
             self.peer_info[client_ip]["online"] = True
 
+    def _find_connection(self, client_ip: str) -> Optional[WebSocket]:
+        ws = self.active_connections.get(client_ip)
+        if ws is not None:
+            return ws
+        clean_ip = client_ip.replace("::ffff:", "")
+        for ip, conn in self.active_connections.items():
+            if ip.replace("::ffff:", "") == clean_ip:
+                return conn
+        return None
+
     def is_active(self, client_ip: str) -> bool:
-        return client_ip in self.active_connections
+        return self._find_connection(client_ip) is not None
 
     async def send(self, client_ip: str, payload: dict) -> bool:
-        ws = self.active_connections.get(client_ip)
+        ws = self._find_connection(client_ip)
         if ws is None:
             return False
-        try:
-            await asyncio.wait_for(ws.send_json(payload), timeout=HEARTBEAT_TIMEOUT)
-            return True
-        except Exception:
-            self.disconnect(client_ip)
-            return False
+        clean_ip = client_ip.replace("::ffff:", "")
+        lock = self.connection_locks.setdefault(clean_ip, asyncio.Lock())
+        async with lock:
+            try:
+                await ws.send_json(payload)
+                return True
+            except Exception:
+                self.disconnect(client_ip)
+                return False
 
     async def heartbeat_loop(self) -> None:
         while True:
@@ -118,11 +151,16 @@ class ConnectionManager:
             now = time.time()
             for ip in list(self.active_connections.keys()):
                 info = self.peer_info.get(ip)
-                if info and (now - info.get("last_seen", now) > HEARTBEAT_TIMEOUT):
+                if not info or not info.get("online"):
+                    continue
+                last_seen = info.get("last_seen", now)
+                if now - last_seen > HEARTBEAT_TIMEOUT:
                     self.disconnect(ip)
                     continue
-                if not await self.send(ip, {"type": "PING"}):
-                    self.disconnect(ip)
+                # Only ping peer if quiet for at least HEARTBEAT_INTERVAL
+                if now - last_seen >= HEARTBEAT_INTERVAL:
+                    if not await self.send(ip, {"type": "PING"}):
+                        self.disconnect(ip)
 
             # Prune peers that have been offline for more than 45 seconds
             for ip, info in list(self.peer_info.items()):
@@ -300,7 +338,7 @@ async def websocket_endpoint(websocket: WebSocket, client_ip: str) -> None:
     except Exception:
         pass
     finally:
-        manager.disconnect(client_ip)
+        manager.disconnect(client_ip, websocket)
 
 
 @app.get("/api/peers")
@@ -484,38 +522,181 @@ async def respond_batch_transfer(payload: BatchTransferResponse) -> dict:
     return {"status": "ok"}
 
 
+@app.post("/api/transfer/cancel")
+async def cancel_transfer(payload: CancelTransferRequest) -> dict:
+    target_ip = payload.target_ip
+    sender_ip = payload.sender_ip
+
+    if payload.batch_id:
+        batch = store.get_batch(payload.batch_id)
+        if batch:
+            batch["status"] = "cancelled"
+            target_ip = target_ip or batch.get("target_ip")
+            sender_ip = sender_ip or batch.get("sender_ip")
+            for t_id in batch.get("transfer_ids", []):
+                store.set_status(t_id, "cancelled")
+                store._release(t_id)
+            store._batches.pop(payload.batch_id, None)
+    elif sender_ip and target_ip:
+        for b_id, b_data in list(store._batches.items()):
+            if b_data.get("sender_ip") == sender_ip and b_data.get("target_ip") == target_ip:
+                b_data["status"] = "cancelled"
+                for t_id in b_data.get("transfer_ids", []):
+                    store.set_status(t_id, "cancelled")
+                    store._release(t_id)
+                store._batches.pop(b_id, None)
+                payload.batch_id = b_id
+                break
+
+    if payload.transfer_id:
+        entry = store.get(payload.transfer_id)
+        if entry:
+            entry["status"] = "cancelled"
+            target_ip = target_ip or entry.get("target_ip")
+            sender_ip = sender_ip or entry.get("sender_ip")
+            store._release(payload.transfer_id)
+
+    # Immediately signal target peer to dismiss their incoming notification prompt
+    if target_ip:
+        await manager.send(
+            target_ip,
+            {
+                "type": "TRANSFER_CANCELLED",
+                "batch_id": payload.batch_id,
+                "transfer_id": payload.transfer_id,
+                "sender_ip": sender_ip,
+            },
+        )
+
+    return {"status": "cancelled"}
+
+
 @app.post("/api/transfer/upload/{transfer_id}")
-async def upload_stream(transfer_id: str, file: UploadFile = File(...)) -> dict:
+async def upload_stream(transfer_id: str, request: Request) -> dict:
     entry = store.get(transfer_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail="Transfer not found or expired")
+        return {"status": "cancelled", "transfer_id": transfer_id}
+    if entry.get("status") == "cancelled":
+        return {"status": "cancelled", "transfer_id": transfer_id}
     if entry["status"] not in ("requested", "accepted"):
         raise HTTPException(status_code=409, detail="Transfer is not accepting uploads")
 
     buffer = store.open_buffer(transfer_id)
     if buffer is None:
-        raise HTTPException(status_code=404, detail="Transfer not found")
+        return {"status": "cancelled", "transfer_id": transfer_id}
 
     written = 0
+    target_ip = entry.get("target_ip")
+    total_size = entry.get("size", 0)
+    file_name = entry.get("filename", "")
+    last_progress_time = 0.0
+    progress_task: Optional[asyncio.Task] = None
+
     try:
-        while True:
-            chunk = await file.read(UPLOAD_CHUNK_SIZE)
-            if not chunk:
-                break
-            buffer.write(chunk)
-            written += len(chunk)
+        now = time.time()
+        if target_ip:
+            manager.record_activity(target_ip)
+        if entry.get("sender_ip"):
+            manager.record_activity(entry["sender_ip"])
+
+        content_type = request.headers.get("content-type", "")
+        if content_type.startswith("multipart/form-data"):
+            form = await request.form()
+            uploaded_file = form.get("file")
+            if not uploaded_file:
+                raise HTTPException(status_code=400, detail="Missing file part")
+            while True:
+                if entry.get("status") == "cancelled":
+                    return {"status": "cancelled", "transfer_id": transfer_id}
+                chunk = await uploaded_file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                buffer.write(chunk)
+                written += len(chunk)
+                now = time.time()
+                if target_ip and (now - last_progress_time >= PROGRESS_BROADCAST_INTERVAL):
+                    if progress_task is None or progress_task.done():
+                        last_progress_time = now
+                        progress_task = asyncio.create_task(
+                            manager.send(
+                                target_ip,
+                                {
+                                    "type": "TRANSFER_PROGRESS",
+                                    "transfer_id": transfer_id,
+                                    "loaded": written,
+                                    "total": total_size or written,
+                                    "file_name": file_name,
+                                },
+                            )
+                        )
+            if hasattr(uploaded_file, "content_type") and uploaded_file.content_type:
+                entry["content_type"] = uploaded_file.content_type
+        else:
+            # Direct high-speed raw stream directly from socket into buffer
+            async for chunk in request.stream():
+                if entry.get("status") == "cancelled":
+                    return {"status": "cancelled", "transfer_id": transfer_id}
+                if chunk:
+                    buffer.write(chunk)
+                    written += len(chunk)
+                    now = time.time()
+                    if target_ip and (now - last_progress_time >= PROGRESS_BROADCAST_INTERVAL):
+                        if progress_task is None or progress_task.done():
+                            last_progress_time = now
+                            progress_task = asyncio.create_task(
+                                manager.send(
+                                    target_ip,
+                                    {
+                                        "type": "TRANSFER_PROGRESS",
+                                        "transfer_id": transfer_id,
+                                        "loaded": written,
+                                        "total": total_size or written,
+                                        "file_name": file_name,
+                                    },
+                                )
+                            )
+            if content_type and "multipart" not in content_type:
+                entry["content_type"] = content_type
+
+        if progress_task is not None and not progress_task.done():
+            try:
+                await progress_task
+            except Exception:
+                pass
+
+        if entry.get("status") == "cancelled":
+            return {"status": "cancelled", "transfer_id": transfer_id}
+
         buffer.seek(0)
         if written > 0:
             entry["size"] = written
-            entry["content_type"] = file.content_type or entry["content_type"]
             entry["status"] = "ready"
+            if target_ip:
+                await manager.send(
+                    target_ip,
+                    {
+                        "type": "TRANSFER_PROGRESS",
+                        "transfer_id": transfer_id,
+                        "loaded": written,
+                        "total": written,
+                        "file_name": file_name,
+                    },
+                )
             await _notify_upload_complete(transfer_id)
+    except (ClientDisconnect, asyncio.CancelledError):
+        store._release(transfer_id)
+        return {"status": "cancelled", "transfer_id": transfer_id}
     except Exception:
         store._release(transfer_id)
+        if entry.get("status") == "cancelled":
+            return {"status": "cancelled", "transfer_id": transfer_id}
         raise HTTPException(status_code=500, detail="Upload failed")
     finally:
-        if entry.get("spooled"):
-            buffer.close()
+        if entry.get("spooled") and buffer:
+            try:
+                buffer.close()
+            except Exception:
+                pass
 
     return {"status": "ready", "transfer_id": transfer_id, "size": written}
 
@@ -526,19 +707,47 @@ async def download_stream(transfer_id: str) -> StreamingResponse:
     if entry is None:
         raise HTTPException(status_code=404, detail="Transfer expired or already downloaded")
 
-    def file_iterator() -> object:
-        if entry.get("spooled"):
-            handle = open(entry["tmp_path"], "rb")
-        else:
-            handle = entry.get("buffer") or io.BytesIO()
+    sender_ip = entry.get("sender_ip")
+    target_ip = entry.get("target_ip")
+    filename = entry.get("filename", "file")
+
+    async def file_iterator():
         try:
-            while True:
-                chunk = handle.read(UPLOAD_CHUNK_SIZE)
-                if not chunk:
-                    break
-                yield chunk
+            if entry.get("spooled"):
+                with open(entry["tmp_path"], "rb") as handle:
+                    while True:
+                        chunk = handle.read(UPLOAD_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        yield chunk
+            else:
+                handle = entry.get("buffer")
+                if handle is not None:
+                    handle.seek(0)
+                    while True:
+                        chunk = handle.read(UPLOAD_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        yield chunk
+            # Receiver has completely downloaded the file: notify BOTH sender and receiver so overlays finish in exact sync!
+            delivered_payload = {
+                "type": "TRANSFER_DELIVERED",
+                "transfer_id": transfer_id,
+                "file_name": filename,
+            }
+            coros = []
+            if sender_ip:
+                coros.append(manager.send(sender_ip, delivered_payload))
+            if target_ip:
+                coros.append(manager.send(target_ip, delivered_payload))
+            if coros:
+                try:
+                    await asyncio.gather(*coros, return_exceptions=True)
+                except Exception:
+                    pass
+        except ClientDisconnect:
+            pass
         finally:
-            handle.close()
             store._cleanup(entry)
 
     return StreamingResponse(
@@ -548,6 +757,7 @@ async def download_stream(transfer_id: str) -> StreamingResponse:
             "Content-Disposition": _content_disposition(entry["filename"]),
             "Content-Length": str(entry["size"]),
             "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -563,4 +773,4 @@ app.mount("/", StaticFiles(directory="static", html=True), name="static")
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, http="httptools")
