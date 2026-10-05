@@ -5,50 +5,50 @@
 
 ---
 
-## Features & Highlights
+## ✨ Features & Highlights
 
-### Live Transfer Progress Overlay (Sender & Receiver Synchrony)
+### 🔄 Live Transfer Progress Overlay (Sender & Receiver Synchrony)
 - **Bilateral Real-Time Visibility**: Both sender and receiver see the same glowing progress overlay with dynamic percentage, transfer speed, bytes counter, and smoothed ETA.
 - **Exact Millisecond Synchrony**: When the receiver's browser finishes downloading the final byte, the server dispatches a simultaneous `TRANSFER_DELIVERED` event to **both** devices. Both overlays immediately transition to `"Complete"`, chime, hold the 100% finished state for exactly **1200ms**, and dismiss in perfect unison.
 - **Concentric Dial Visual**: SVG circular ring with glowing gradients and fluid CSS transitions.
 - **Progressive ETA & Speed Dampening**: Built-in rolling-window speed smoothing and predictive countdown prevent erratic ETA jumping (e.g. steady countdown from `21s left` → `Finishing…` → `Done`).
 
-### Multi-File Batch Transfers
+### 📦 Multi-File Batch Transfers
 - **Single-Prompt Batch Approval**: Queue multiple files and send them in one go. The recipient receives **one consolidated toast notification** with an intelligent file summary (e.g. `wants to send 3 files (14.2 MB): "photo1.jpg" + 2 more`).
 - **One-Click Accept or Decline**: Accepting approves the entire batch and streams files sequentially; declining rejects the whole transfer without repetitive popups.
 - **Smart Filename Formatting**: Long filenames are concisely formatted (e.g. `annual_financial_report_2026…pdf`) to prevent clipping or layout overflows on mobile screens.
 
-### Ultra-Fast High-Throughput Streaming
+### ⚡ Ultra-Fast High-Throughput Streaming
 - **Raw Binary Stream**: Transfers bypass multipart boundary parsing overhead by streaming directly as binary octet streams.
 - **Optimized Wi-Fi Airtime**: Progress broadcasts are throttled to 350ms (`BEAMLY_PROGRESS_INTERVAL`), eliminating half-duplex Wi-Fi packet contention and preserving maximum transfer bandwidth.
 - **High-Speed Buffers**: 8 MB chunk streaming buffers (`BEAMLY_CHUNK_SIZE`) and C-based `httptools` parser deliver high-speed local throughput across gigabit LAN and 5GHz Wi-Fi.
 
-### Clean One-Click Cancellation
+### 🛑 Clean One-Click Cancellation
 - **Graceful Stream Interruption**: Pressing **"Cancel Beam"** cleanly aborts active transfers without triggering `500 Internal Server Error` in the server terminal.
 - **Instant Bilateral Reset**: Dispatches `TRANSFER_CANCELLED` to instantly dismiss incoming prompts on the peer device and immediately releases all allocated memory and temporary files.
 
-### Dynamic Peer Presence & Signal Status
+### 🌐 Dynamic Peer Presence & Signal Status
 - **Real-Time Heartbeat Discovery**: Active devices on the same Wi-Fi or LAN subnet automatically register and discover each other via WebSockets.
 - **Dynamic Signal Indicators**:
   - **Emerald Green Dot (Pulsing)**: Active, online, and discoverable peers ready to beam.
   - **Ruby Red Dot (Pulsing)**: Unreachable or recently disconnected peers.
 - **Graceful Offline Handling**: Disconnected peers transition to red and remain visible for a short grace period (45s) before pruning, preventing abrupt UI vanishing.
 
-### Luxury Glassmorphism 2.0 Interface
+### 💎 Luxury Glassmorphism 2.0 Interface
 - **Default Dark Glassmorphic Aesthetic**: Boots directly into Beamly's dark frosted glass mode with ambient aurora glows (`beamly-theme-v2`).
 - **Pro Radar Beacon**: Ready-to-Receive mode features a beacon inspired by flagship mobile ecosystems, illuminated with the Beamly brand logo and concentric acoustic energy rings.
 - **Floating High-Contrast Send Dock**: An elevated, glowing glass dock featuring a custom device selector, payload counter pill, and glowing neon action button with dedicated dock clearance.
 - **Adaptive Dropzone**: Displays a spacious drag-and-drop area when empty, smoothly collapses into a compact **48px "Add more files"** bar once files are queued, and automatically resets when finished.
 - **Synthesized Web Audio Chimes & Mobile Haptics**: Full cross-browser audio unlocking (iOS Safari & Chrome Mobile) with physical vibration patterns (`navigator.vibrate`) for confirming sends, cancelling beams, completion blooms, and incoming requests.
 
-### Ephemeral In-Memory Architecture
+### 🛡️ Ephemeral In-Memory Architecture
 - **Zero Disk Footprint**: Standard transfers stream directly through RAM (`io.BytesIO`) — nothing is permanently stored on disk.
 - **Automatic Spooling**: Files exceeding the configurable RAM limit (default: 512 MB) automatically spool to a temporary disk buffer to prevent memory exhaustion.
 - **Single-Use Downloads & Auto TTL**: Transfers are strictly single-use and automatically cleaned up upon download or after 5 minutes of inactivity.
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Prerequisites
 - Python 3.9+ installed on your machine.
@@ -83,7 +83,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 ### 4. Connect & Share
 - On the host machine: Open `http://localhost:8000` (or `http://127.0.0.1:8000`).
-- On other phones, laptops, or tablets on the same Wi-Fi: Open `http://<HOST_LAN_IP>:8000` (e.g. `http://192.168.1.57:8000`).
+- On other phones, laptops, or tablets on the same Wi-Fi: Open `http://<HOST_LAN_IP>:8000` (e.g. `http://192.168.1.27:8000`).
 - *Tip: Ensure port `8000` is allowed through your host firewall.*
 
 ---

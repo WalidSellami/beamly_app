@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import ClientDisconnect
+from starlette.websockets import WebSocketState
 from urllib.parse import quote
 
 from pydantic import BaseModel
@@ -79,6 +80,19 @@ class CancelTransferRequest(BaseModel):
     target_ip: Optional[str] = None
 
 
+async def _safe_close_websocket(ws: Optional[WebSocket]) -> None:
+    if ws is None:
+        return
+    try:
+        if (
+            getattr(ws, "client_state", None) != WebSocketState.DISCONNECTED
+            and getattr(ws, "application_state", None) != WebSocketState.DISCONNECTED
+        ):
+            await ws.close(code=1000)
+    except Exception:
+        pass
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active_connections: Dict[str, WebSocket] = {}
@@ -103,10 +117,7 @@ class ConnectionManager:
         old_ws = self.active_connections.get(client_ip)
         self.active_connections[client_ip] = websocket
         if old_ws is not None and old_ws is not websocket:
-            try:
-                await old_ws.close()
-            except Exception:
-                pass
+            asyncio.create_task(_safe_close_websocket(old_ws))
         now = time.time()
         self.peer_info[client_ip] = {
             "ip": client_ip,
@@ -131,10 +142,7 @@ class ConnectionManager:
         ws = self.active_connections.pop(client_ip, None)
         self.connection_locks.pop(clean_ip, None)
         if ws is not None:
-            try:
-                asyncio.create_task(ws.close())
-            except Exception:
-                pass
+            asyncio.create_task(_safe_close_websocket(ws))
         if client_ip in self.peer_info:
             self.peer_info[client_ip]["online"] = False
             self.peer_info[client_ip]["offline_since"] = time.time()
