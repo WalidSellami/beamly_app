@@ -105,144 +105,282 @@
     }
   }
 
-  /* ---- Luxury acoustic sound engine (Web Audio synthesis) ----
+  /* ---- Luxury acoustic sound engine (Web Audio synthesis) & Mobile Haptics ----
      Warm acoustic filtered harmonics with soft exponential attack and
-     silky decay envelopes — calm, smooth, organic (no harsh treble buzzing). */
+     silky decay envelopes — calm, smooth, organic (no harsh digital transients).
+     Full mobile browser unlock for background / async events (Safari & Chrome). */
   let audioCtx = null;
+  let isAudioUnlocked = false;
+  let lastChimeTime = 0;
+  let lastChimeType = "";
 
-  function ensureAudio() {
-    if (audioCtx) {
-      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  function getAudioContext() {
+    if (audioCtx && audioCtx.state !== "closed") {
       return audioCtx;
     }
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
       audioCtx = new AC();
-      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
     } catch (e) {
       audioCtx = null;
     }
     return audioCtx;
   }
 
+  function ensureAudio() {
+    const ctx = getAudioContext();
+    if (!ctx) return null;
+    if (ctx.state === "suspended" || ctx.state === "interrupted") {
+      ctx.resume().catch(() => {});
+    }
+    return ctx;
+  }
+
+  /* Robust mobile haptic vibration feedback */
+  function triggerHaptic(type = "notice") {
+    if (typeof navigator === "undefined" || !navigator.vibrate) return;
+    try {
+      switch (type) {
+        case "send_start":
+        case "confirm":
+          navigator.vibrate([45]); // Clean crisp confirmation tap
+          break;
+        case "cancel":
+        case "decline":
+          navigator.vibrate([60, 45, 60]); // Distinct double alert pulse
+          break;
+        case "send_complete":
+        case "success":
+          navigator.vibrate([60, 40, 70, 40, 120]); // Celebratory completion rhythm
+          break;
+        case "incoming":
+          navigator.vibrate([100, 60, 100]); // Attention double-buzz
+          break;
+        case "notice":
+        default:
+          navigator.vibrate([25]); // Light tactile tick
+          break;
+      }
+    } catch (_) {}
+  }
+
+  /* One-time mobile audio priming: plays a silent 1-sample buffer during a user gesture
+     to permanently grant audio playback privileges to the session (essential for iOS Safari). */
+  function unlockAudio() {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended" || ctx.state === "interrupted") {
+      ctx.resume().catch(() => {});
+    }
+    if (!isAudioUnlocked) {
+      try {
+        const buffer = ctx.createBuffer(1, 1, 22050);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+        isAudioUnlocked = true;
+      } catch (_) {}
+    }
+  }
+
   function playChime(type = "notice") {
+    // Mobile tactile feedback matching the sound event
+    triggerHaptic(type);
+
+    const now = performance.now();
+    if (type === lastChimeType && now - lastChimeTime < 180) {
+      return; // Debounce rapid duplicate calls
+    }
+    lastChimeTime = now;
+    lastChimeType = type;
+
     const ctx = ensureAudio();
     if (!ctx) return;
-    try {
-      const t0 = ctx.currentTime + 0.015;
 
-      // Master acoustic filter: warm low-pass removing harsh digital transients
-      const filter = ctx.createBiquadFilter();
-      filter.type = "lowpass";
+    const render = () => {
+      try {
+        const t0 = ctx.currentTime + 0.015;
 
-      const masterGain = ctx.createGain();
-      filter.connect(masterGain);
-      masterGain.connect(ctx.destination);
+        // Master acoustic filter: warm low-pass removing harsh digital transients
+        const filter = ctx.createBiquadFilter();
+        filter.type = "lowpass";
 
-      if (type === "send_complete" || type === "success") {
-        // Ultra-calm, velvety smooth luxury bloom: F3 (174Hz) -> C4 (261Hz) -> A4 (440Hz) -> C5 (523Hz) -> E5 (659Hz)
-        filter.frequency.setValueAtTime(1400, t0);
-        filter.Q.setValueAtTime(0.8, t0);
-        masterGain.gain.setValueAtTime(0.85, t0);
+        const masterGain = ctx.createGain();
+        filter.connect(masterGain);
+        masterGain.connect(ctx.destination);
 
-        const notes = [
-          { freq: 174.61, at: 0.00, dur: 1.35, peak: 0.12, type: "sine" },
-          { freq: 261.63, at: 0.04, dur: 1.25, peak: 0.15, type: "sine" },
-          { freq: 440.00, at: 0.10, dur: 1.15, peak: 0.14, type: "sine" },
-          { freq: 523.25, at: 0.16, dur: 1.05, peak: 0.11, type: "sine" },
-          { freq: 659.25, at: 0.22, dur: 0.95, peak: 0.07, type: "sine" },
-        ];
+        if (type === "send_complete" || type === "success") {
+          // Ultra-calm, velvety smooth luxury bloom: F3 (174Hz) -> C4 (261Hz) -> A4 (440Hz) -> C5 (523Hz) -> E5 (659Hz)
+          filter.frequency.setValueAtTime(1400, t0);
+          filter.Q.setValueAtTime(0.8, t0);
+          masterGain.gain.setValueAtTime(0.85, t0);
 
-        notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = oscType;
-          osc.frequency.setValueAtTime(freq, t0 + at);
-          gain.gain.setValueAtTime(0.0001, t0 + at);
-          gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.045);
-          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
-          osc.connect(gain);
-          gain.connect(filter);
-          osc.start(t0 + at);
-          osc.stop(t0 + at + dur + 0.08);
-        });
-      } else if (type === "send_start") {
-        // Gentle ambient swell: peaceful ascending breath
-        filter.frequency.setValueAtTime(1100, t0);
-        filter.Q.setValueAtTime(0.7, t0);
-        masterGain.gain.setValueAtTime(0.65, t0);
+          const notes = [
+            { freq: 174.61, at: 0.00, dur: 1.35, peak: 0.12, type: "sine" },
+            { freq: 261.63, at: 0.04, dur: 1.25, peak: 0.15, type: "sine" },
+            { freq: 440.00, at: 0.10, dur: 1.15, peak: 0.14, type: "sine" },
+            { freq: 523.25, at: 0.16, dur: 1.05, peak: 0.11, type: "sine" },
+            { freq: 659.25, at: 0.22, dur: 0.95, peak: 0.07, type: "sine" },
+          ];
 
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(320, t0);
-        osc.frequency.exponentialRampToValueAtTime(480, t0 + 0.45);
-        gain.gain.setValueAtTime(0.0001, t0);
-        gain.gain.exponentialRampToValueAtTime(0.07, t0 + 0.18);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
-        osc.connect(gain);
-        gain.connect(filter);
-        osc.start(t0);
-        osc.stop(t0 + 0.60);
-      } else if (type === "incoming") {
-        // Calm soothing dual-phase glass marimba: G4 (392Hz) + D5 (587Hz) -> B4 (493Hz) + G5 (784Hz)
-        filter.frequency.setValueAtTime(1500, t0);
-        filter.Q.setValueAtTime(1.0, t0);
-        masterGain.gain.setValueAtTime(0.85, t0);
+          notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = oscType;
+            osc.frequency.setValueAtTime(freq, t0 + at);
+            gain.gain.setValueAtTime(0.0001, t0 + at);
+            gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.045);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+            osc.connect(gain);
+            gain.connect(filter);
+            osc.start(t0 + at);
+            osc.stop(t0 + at + dur + 0.08);
+          });
+        } else if (type === "send_start" || type === "confirm") {
+          // Affirmative ascending chime: warm harmonic swell + crisp reassuring glass ping (C5 523Hz + G5 784Hz)
+          filter.frequency.setValueAtTime(1500, t0);
+          filter.Q.setValueAtTime(0.8, t0);
+          masterGain.gain.setValueAtTime(0.75, t0);
 
-        const notes = [
-          { freq: 392.00, at: 0.00, dur: 0.85, peak: 0.15, type: "sine" },
-          { freq: 587.33, at: 0.02, dur: 0.75, peak: 0.12, type: "sine" },
-          { freq: 493.88, at: 0.15, dur: 0.95, peak: 0.14, type: "sine" },
-          { freq: 783.99, at: 0.17, dur: 0.85, peak: 0.09, type: "sine" },
-        ];
-        notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = oscType;
-          osc.frequency.setValueAtTime(freq, t0 + at);
-          gain.gain.setValueAtTime(0.0001, t0 + at);
-          gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.035);
-          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
-          osc.connect(gain);
-          gain.connect(filter);
-          osc.start(t0 + at);
-          osc.stop(t0 + at + dur + 0.06);
-        });
-      } else {
-        // Soft subtle water-droplet / acoustic glass tap
-        filter.frequency.setValueAtTime(1800, t0);
-        filter.Q.setValueAtTime(1.0, t0);
-        masterGain.gain.setValueAtTime(0.75, t0);
+          // Gentle ambient breath
+          const sweepOsc = ctx.createOscillator();
+          const sweepGain = ctx.createGain();
+          sweepOsc.type = "sine";
+          sweepOsc.frequency.setValueAtTime(320, t0);
+          sweepOsc.frequency.exponentialRampToValueAtTime(520, t0 + 0.35);
+          sweepGain.gain.setValueAtTime(0.0001, t0);
+          sweepGain.gain.exponentialRampToValueAtTime(0.08, t0 + 0.12);
+          sweepGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.40);
+          sweepOsc.connect(sweepGain);
+          sweepGain.connect(filter);
+          sweepOsc.start(t0);
+          sweepOsc.stop(t0 + 0.45);
 
-        const notes = [
-          { freq: 440.00, at: 0.00, dur: 0.45, peak: 0.13, type: "sine" },
-          { freq: 880.00, at: 0.02, dur: 0.38, peak: 0.07, type: "sine" },
-        ];
-        notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = oscType;
-          osc.frequency.setValueAtTime(freq, t0 + at);
-          gain.gain.setValueAtTime(0.0001, t0 + at);
-          gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.025);
-          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
-          osc.connect(gain);
-          gain.connect(filter);
-          osc.start(t0 + at);
-          osc.stop(t0 + at + dur + 0.05);
-        });
+          // Harmonic confirmation pings
+          const pings = [
+            { freq: 523.25, at: 0.03, dur: 0.55, peak: 0.13 },
+            { freq: 783.99, at: 0.06, dur: 0.50, peak: 0.09 },
+          ];
+          pings.forEach(({ freq, at, dur, peak }) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(freq, t0 + at);
+            gain.gain.setValueAtTime(0.0001, t0 + at);
+            gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.025);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+            osc.connect(gain);
+            gain.connect(filter);
+            osc.start(t0 + at);
+            osc.stop(t0 + at + dur + 0.05);
+          });
+        } else if (type === "cancel" || type === "decline") {
+          // Soft descending acoustic glass drop: E5 (659Hz) -> B4 (493Hz) -> G4 (392Hz)
+          filter.frequency.setValueAtTime(1300, t0);
+          filter.Q.setValueAtTime(0.9, t0);
+          masterGain.gain.setValueAtTime(0.65, t0);
+
+          const notes = [
+            { freq: 659.25, at: 0.00, dur: 0.35, peak: 0.11, type: "sine" },
+            { freq: 493.88, at: 0.08, dur: 0.32, peak: 0.09, type: "sine" },
+            { freq: 392.00, at: 0.16, dur: 0.38, peak: 0.07, type: "sine" },
+          ];
+          notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = oscType;
+            osc.frequency.setValueAtTime(freq, t0 + at);
+            gain.gain.setValueAtTime(0.0001, t0 + at);
+            gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.025);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+            osc.connect(gain);
+            gain.connect(filter);
+            osc.start(t0 + at);
+            osc.stop(t0 + at + dur + 0.05);
+          });
+        } else if (type === "incoming") {
+          // Calm soothing dual-phase glass marimba: G4 (392Hz) + D5 (587Hz) -> B4 (493Hz) + G5 (784Hz)
+          filter.frequency.setValueAtTime(1500, t0);
+          filter.Q.setValueAtTime(1.0, t0);
+          masterGain.gain.setValueAtTime(0.85, t0);
+
+          const notes = [
+            { freq: 392.00, at: 0.00, dur: 0.85, peak: 0.15, type: "sine" },
+            { freq: 587.33, at: 0.02, dur: 0.75, peak: 0.12, type: "sine" },
+            { freq: 493.88, at: 0.15, dur: 0.95, peak: 0.14, type: "sine" },
+            { freq: 783.99, at: 0.17, dur: 0.85, peak: 0.09, type: "sine" },
+          ];
+          notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = oscType;
+            osc.frequency.setValueAtTime(freq, t0 + at);
+            gain.gain.setValueAtTime(0.0001, t0 + at);
+            gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.035);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+            osc.connect(gain);
+            gain.connect(filter);
+            osc.start(t0 + at);
+            osc.stop(t0 + at + dur + 0.06);
+          });
+        } else {
+          // Soft subtle water-droplet / acoustic glass tap
+          filter.frequency.setValueAtTime(1800, t0);
+          filter.Q.setValueAtTime(1.0, t0);
+          masterGain.gain.setValueAtTime(0.75, t0);
+
+          const notes = [
+            { freq: 440.00, at: 0.00, dur: 0.45, peak: 0.13, type: "sine" },
+            { freq: 880.00, at: 0.02, dur: 0.38, peak: 0.07, type: "sine" },
+          ];
+          notes.forEach(({ freq, at, dur, peak, type: oscType }) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = oscType;
+            osc.frequency.setValueAtTime(freq, t0 + at);
+            gain.gain.setValueAtTime(0.0001, t0 + at);
+            gain.gain.exponentialRampToValueAtTime(peak, t0 + at + 0.025);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+            osc.connect(gain);
+            gain.connect(filter);
+            osc.start(t0 + at);
+            osc.stop(t0 + at + dur + 0.05);
+          });
+        }
+      } catch (e) {
+        /* Audio blocked or unavailable — silent fallback */
       }
-    } catch (e) {
-      /* Audio blocked or unavailable — silent fallback */
+    };
+
+    if (ctx.state === "suspended" || ctx.state === "interrupted") {
+      ctx.resume().then(render).catch(render);
+    } else {
+      render();
     }
   }
 
   function initAudioUnlock() {
-    ["pointerdown", "keydown", "touchend"].forEach((ev) =>
-      document.addEventListener(ev, ensureAudio, { passive: true })
-    );
+    const unlockEvents = ["touchstart", "touchend", "pointerdown", "click", "keydown"];
+    const handleGesture = () => {
+      unlockAudio();
+    };
+    unlockEvents.forEach((ev) => {
+      window.addEventListener(ev, handleGesture, { passive: true, capture: true });
+    });
+
+    // Re-wake audio context when browser tab is refocused
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && audioCtx && (audioCtx.state === "suspended" || audioCtx.state === "interrupted")) {
+        audioCtx.resume().catch(() => {});
+      }
+    });
+    window.addEventListener("focus", () => {
+      if (audioCtx && (audioCtx.state === "suspended" || audioCtx.state === "interrupted")) {
+        audioCtx.resume().catch(() => {});
+      }
+    });
   }
 
   /* ---- Server config ---- */
@@ -339,17 +477,40 @@
   }
 
   /* ---- Peer list (+ Receive-mode status) ---- */
+  /* ---- Peer list (+ Receive-mode status) ---- */
   function renderPeers(peers) {
-    const list = peers.filter((ip) => ip !== state.myIp);
+    const list = (peers || []).filter((p) => {
+      const ip = typeof p === "string" ? p : p.ip;
+      return ip && ip !== state.myIp;
+    });
+
+    // If currently selected target went offline, immediately deselect it and notify user
+    if (state.target) {
+      const selectedItem = list.find((p) => (typeof p === "string" ? p : p.ip) === state.target);
+      const isStillOnline = selectedItem && (typeof selectedItem === "string" || selectedItem.status === "online");
+      if (!isStillOnline) {
+        const lostTarget = state.target;
+        state.target = null;
+        if (ui.dockTarget) {
+          ui.dockTarget.value = "";
+        }
+        showToast(`Device ${lostTarget} went offline.`);
+      }
+    }
+
     ui.peerList.innerHTML = "";
     populateTargetOptions(list);
+
+    const onlinePeers = list.filter((p) => typeof p === "string" || p.status === "online");
+    const onlineCount = onlinePeers.length;
+
     const statPeers = $("statPeers");
-    if (statPeers) statPeers.textContent = String(list.length);
+    if (statPeers) statPeers.textContent = String(onlineCount);
     const rx = $("rxStatus");
     if (rx) {
-      rx.textContent = !list.length
+      rx.textContent = !onlineCount
         ? "Waiting for incoming beams…"
-        : `${list.length} device${list.length > 1 ? "s" : ""} in range · waiting for incoming beams…`;
+        : `${onlineCount} device${onlineCount > 1 ? "s" : ""} in range · waiting for incoming beams…`;
     }
 
     if (!list.length) {
@@ -370,10 +531,7 @@
     }
 
     ui.radar.classList.remove("scanning");
-    const onlineCount = list.filter((p) => typeof p === "string" || p.status === "online").length;
     ui.radarHint.textContent = `${onlineCount} device${onlineCount !== 1 ? "s" : ""} online`;
-
-    populateTargetOptions(list);
 
     list.forEach((item, i) => {
       const ip = typeof item === "string" ? item : item.ip;
@@ -385,6 +543,7 @@
       li.dataset.online = String(isOnline);
       li.setAttribute("role", "button");
       li.setAttribute("tabindex", isOnline ? "0" : "-1");
+      li.setAttribute("aria-disabled", String(!isOnline));
       li.setAttribute("aria-label", `${ip} (${isOnline ? "Online" : "Offline"})`);
       li.style.setProperty("--i", i);
       const isSelected = ip === state.target && isOnline;
@@ -401,7 +560,7 @@
       `;
       li.addEventListener("click", () => {
         if (!isOnline) {
-          showToast(`Device ${ip} is offline.`);
+          showToast(`Device ${ip} is offline and cannot be selected.`);
           return;
         }
         selectTarget(ip);
@@ -410,7 +569,7 @@
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           if (!isOnline) {
-            showToast(`Device ${ip} is offline.`);
+            showToast(`Device ${ip} is offline and cannot be selected.`);
             return;
           }
           selectTarget(ip);
@@ -419,21 +578,16 @@
       ui.peerList.appendChild(li);
     });
 
-    // If currently selected target went offline, deselect it
-    if (state.target) {
-      const selectedItem = list.find((p) => (typeof p === "string" ? p : p.ip) === state.target);
-      const isStillOnline = selectedItem && (typeof selectedItem === "string" || selectedItem.status === "online");
-      if (!isStillOnline) {
-        state.target = null;
-      }
-    }
     syncSendDock();
   }
 
   function markAllPeersOffline() {
-    document.querySelectorAll(".peer-card").forEach((el) => {
+    document.querySelectorAll(".peer-card:not(.no-anim)").forEach((el) => {
       el.classList.add("is-offline");
       el.dataset.online = "false";
+      el.classList.remove("selected");
+      el.setAttribute("aria-disabled", "true");
+      el.setAttribute("tabindex", "-1");
       const sig = el.querySelector(".peer-signal");
       if (sig) {
         sig.className = "peer-signal offline";
@@ -445,40 +599,64 @@
     });
     if (state.target) {
       state.target = null;
-      syncSendDock();
     }
+    if (ui.dockTarget) {
+      ui.dockTarget.innerHTML = '<option value="">Select device…</option>';
+      ui.dockTarget.value = "";
+    }
+    syncSendDock();
   }
 
+  /* Populate Send Dock target dropdown: only online devices can be selected for sending */
   function populateTargetOptions(list) {
     if (!ui.dockTarget) return;
     const norm = list.map((p) =>
       typeof p === "string" ? { ip: p, isOnline: true } : { ip: p.ip, isOnline: p.status === "online" }
     );
-    const current = state.target && norm.some((p) => p.ip === state.target && p.isOnline) ? state.target : "";
-    ui.dockTarget.innerHTML =
-      '<option value="">Select device…</option>' +
-      norm
-        .map(
-          ({ ip, isOnline }) =>
-            `<option value="${ip}" ${!isOnline ? "disabled" : ""} ${ip === current ? "selected" : ""}>${ip}${!isOnline ? " (Offline)" : ""}</option>`
-        )
-        .join("");
+    const onlinePeers = norm.filter((p) => p.isOnline);
+    const current = state.target && onlinePeers.some((p) => p.ip === state.target) ? state.target : "";
+    if (!current && state.target) {
+      state.target = null;
+    }
+
+    let optionsHtml = '<option value="">Select device…</option>';
+    onlinePeers.forEach(({ ip }) => {
+      const isSel = ip === current;
+      optionsHtml += `<option value="${ip}" ${isSel ? "selected" : ""}>Device ${ip}</option>`;
+    });
+
+    ui.dockTarget.innerHTML = optionsHtml;
+    ui.dockTarget.value = current;
   }
 
-  /* Toggle selection: clicking a selected device deselects it */
+  /* Toggle selection: only online devices are supported for selection */
   function selectTarget(ip) {
+    if (!ip) {
+      deselectTarget();
+      return;
+    }
+
+    // Verify peer is actually online before allowing selection
+    const card = document.querySelector(`.peer-card[data-ip="${ip}"]`);
+    const isOnline = card ? card.dataset.online !== "false" : true;
+    if (!isOnline) {
+      showToast(`Device ${ip} is offline and cannot be selected.`);
+      deselectTarget();
+      return;
+    }
+
     state.target = state.target === ip ? null : ip;
     if (ui.dockTarget) {
       ui.dockTarget.value = state.target || "";
     }
 
     document.querySelectorAll(".peer-card:not(.no-anim)").forEach((el) => {
-      const isSelected = el.dataset.ip === state.target;
+      const isCardOnline = el.dataset.online !== "false";
+      const isSelected = el.dataset.ip === state.target && isCardOnline;
       el.classList.toggle("selected", isSelected);
       const sub = el.querySelector(".text-xs");
-      const isOnline = el.dataset.online !== "false";
       if (sub) {
-        sub.textContent = !isOnline ? "Offline" : isSelected ? "Selected — ready to beam" : "Ready to receive";
+        sub.textContent = !isCardOnline ? "Offline" : isSelected ? "Selected — ready to beam" : "Ready to receive";
       }
     });
 
@@ -492,7 +670,7 @@
     if (ui.dockTarget) {
       ui.dockTarget.value = "";
     }
-    document.querySelectorAll(".peer-card").forEach((el) => {
+    document.querySelectorAll(".peer-card:not(.no-anim)").forEach((el) => {
       el.classList.remove("selected");
       const sub = el.querySelector(".text-xs");
       const isOnline = el.dataset.online !== "false";
@@ -514,9 +692,9 @@
     const hasFiles = state.queue.length > 0;
     const total = state.queue.reduce((sum, f) => sum + f.size, 0);
 
-    // Sync dockTarget select element to current state.target (do NOT wipe state.target!)
-    if (ui.dockTarget && state.target) {
-      ui.dockTarget.value = state.target;
+    // Sync dockTarget select element to current state.target
+    if (ui.dockTarget) {
+      ui.dockTarget.value = state.target || "";
     }
 
     if (hasFiles && !state.sending) {
@@ -551,7 +729,20 @@
     if (ui.dockSendBtn) {
       ui.dockSendBtn.addEventListener("click", () => {
         if (!state.target) {
-          showToast("Please select a nearby device to beam to.");
+          showToast("Please select a nearby online device to beam to.");
+          return;
+        }
+        // Double-check target is still online before beaming
+        const peerCards = document.querySelectorAll(".peer-card");
+        let isTargetOnline = true;
+        peerCards.forEach((c) => {
+          if (c.dataset.ip === state.target && c.dataset.online === "false") {
+            isTargetOnline = false;
+          }
+        });
+        if (!isTargetOnline) {
+          showToast(`Device ${state.target} is offline. Please select an online device.`);
+          deselectTarget();
           return;
         }
         if (!state.queue || state.queue.length === 0) {
@@ -665,8 +856,16 @@
     ui.toastMsg.textContent = msg;
     ui.toastActions.style.display = interactive ? "" : "none";
 
-    const accept = () => { hideToast(); if (onAccept) onAccept(); };
-    const decline = () => { hideToast(); if (onDecline) onDecline(); };
+    const accept = () => {
+      playChime("confirm");
+      hideToast();
+      if (onAccept) onAccept();
+    };
+    const decline = () => {
+      playChime("cancel");
+      hideToast();
+      if (onDecline) onDecline();
+    };
     $("acceptBtn").onclick = interactive ? accept : null;
     $("declineBtn").onclick = interactive ? decline : null;
 
@@ -716,6 +915,7 @@
 
   function cancelCurrentTransfer() {
     hideToast(true);
+    playChime("cancel");
     if (typeof onCancelTransferCallback === "function") {
       try { onCancelTransferCallback(); } catch (_) {}
     }
@@ -823,6 +1023,7 @@
     fmtBytes,
     fmtSpeed,
     playChime,
+    triggerHaptic,
     deselectTarget,
     setOnCancelTransfer,
     cancelCurrentTransfer,

@@ -68,6 +68,10 @@
       if (WS.socket && WS.socket.readyState === WebSocket.OPEN) WS.socket.send("PONG");
       return;
     }
+    if (msg.type === "PEER_STATUS") {
+      refreshNow();
+      return;
+    }
     if (msg.type === "BATCH_TRANSFER_REQUEST") {
       onBatchTransferRequest(msg);
       return;
@@ -116,6 +120,7 @@
         receiverSafetyTimer = null;
       }
       activeReceiveBatch = null;
+      app().playChime("cancel");
       app().hideToast(true);
       app().hideProgress();
       if (msg.batch_id) resolveBatchPending(msg.batch_id, false);
@@ -339,6 +344,7 @@
   async function respondBatch(batchId, accept, metaMsg) {
     const meta = metaMsg || lastIncomingBatchRequest || {};
     if (accept) {
+      app().playChime("confirm");
       activeReceiveBatch = {
         batch_id: batchId,
         sender_ip: meta.sender_ip || "Peer",
@@ -357,6 +363,7 @@
       app().setProgress(0, 0, 0, activeReceiveBatch.total_size, null);
 
       app().setOnCancelTransfer(() => {
+        app().playChime("cancel");
         if (receiverCompleteTimer) {
           clearTimeout(receiverCompleteTimer);
           receiverCompleteTimer = null;
@@ -379,6 +386,8 @@
         }
         app().hideProgress();
       });
+    } else {
+      app().playChime("cancel");
     }
 
     try {
@@ -406,6 +415,7 @@
   async function respond(transferId, accept, metaMsg) {
     const meta = metaMsg || lastIncomingSingleRequest || {};
     if (accept) {
+      app().playChime("confirm");
       activeReceiveBatch = {
         transfer_id: transferId,
         sender_ip: meta.sender_ip || "Peer",
@@ -421,6 +431,7 @@
       app().setProgress(0, 0, 0, meta.file_size || 0, null);
 
       app().setOnCancelTransfer(() => {
+        app().playChime("cancel");
         if (receiverCompleteTimer) {
           clearTimeout(receiverCompleteTimer);
           receiverCompleteTimer = null;
@@ -443,6 +454,8 @@
         }
         app().hideProgress();
       });
+    } else {
+      app().playChime("cancel");
     }
 
     try {
@@ -532,6 +545,7 @@
 
   function cancelActiveTransfer() {
     isTransferCancelled = true;
+    app().playChime("cancel");
     if (receiverCompleteTimer) {
       clearTimeout(receiverCompleteTimer);
       receiverCompleteTimer = null;
@@ -672,6 +686,7 @@
       }
 
       if (!accepted) {
+        app().playChime("cancel");
         app().showToast(`Transfer was declined by ${targetIp}.`);
         return;
       }
@@ -713,6 +728,7 @@
       if (isTransferCancelled) {
         app().hideToast(true);
       } else {
+        app().playChime("cancel");
         app().showToast(`Transfer failed: ${err.message}`);
       }
     } finally {

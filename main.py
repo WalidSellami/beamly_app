@@ -85,6 +85,19 @@ class ConnectionManager:
         self.connection_locks: Dict[str, asyncio.Lock] = {}
         self.peer_info: Dict[str, dict] = {}
 
+    async def broadcast(self, payload: dict, exclude_ip: Optional[str] = None) -> None:
+        clean_exclude = exclude_ip.replace("::ffff:", "") if exclude_ip else None
+        tasks = []
+        for ip in list(self.active_connections.keys()):
+            if clean_exclude and ip.replace("::ffff:", "") == clean_exclude:
+                continue
+            tasks.append(self.send(ip, payload))
+        if tasks:
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception:
+                pass
+
     async def connect(self, client_ip: str, websocket: WebSocket) -> None:
         await websocket.accept()
         old_ws = self.active_connections.get(client_ip)
@@ -102,6 +115,7 @@ class ConnectionManager:
             "last_seen": now,
             "offline_since": None,
         }
+        asyncio.create_task(self.broadcast({"type": "PEER_STATUS", "ip": client_ip, "status": "online"}, exclude_ip=client_ip))
 
     def disconnect(self, client_ip: str, websocket: Optional[WebSocket] = None) -> None:
         if websocket is not None and self.active_connections.get(client_ip) is not websocket:
@@ -112,6 +126,7 @@ class ConnectionManager:
         if client_ip in self.peer_info:
             self.peer_info[client_ip]["online"] = False
             self.peer_info[client_ip]["offline_since"] = time.time()
+        asyncio.create_task(self.broadcast({"type": "PEER_STATUS", "ip": client_ip, "status": "offline"}))
 
     def record_activity(self, client_ip: str) -> None:
         if client_ip in self.peer_info:

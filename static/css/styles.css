@@ -891,15 +891,28 @@ body[data-mode="receive"] .tab-glider { transform: translateX(100%); }
   transform: scale(1.015);
 }
 .peer-card.is-offline {
-  opacity: 0.62;
+  opacity: 0.52;
   cursor: not-allowed;
-  filter: grayscale(0.25);
+  filter: grayscale(0.4);
+  pointer-events: auto;
+  user-select: none;
 }
-.peer-card.is-offline:hover {
-  transform: none;
-  border-color: var(--glass-border);
-  background: var(--glass-bg);
-  box-shadow: none;
+.peer-card.is-offline:hover,
+.peer-card.is-offline:active {
+  transform: none !important;
+  border-color: var(--glass-border) !important;
+  background: var(--glass-bg) !important;
+  box-shadow: none !important;
+}
+.peer-card.is-offline .peer-avatar {
+  background: rgba(100, 116, 139, 0.4) !important;
+  box-shadow: none !important;
+}
+.peer-card.is-offline.selected {
+  border-color: var(--glass-border) !important;
+  background: var(--glass-bg) !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
 @keyframes peer-in {
   from { opacity: 0; transform: translateY(10px); }
