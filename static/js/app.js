@@ -100,7 +100,6 @@
         const nextDark = !currentlyDark;
         applyTheme(nextDark, true);
         try { localStorage.setItem("beamly-theme-v2", nextDark ? "dark" : "light"); } catch (e) { /* private mode */ }
-        playChime("notice");
       });
     }
   }

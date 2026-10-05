@@ -35,8 +35,8 @@ app.add_middleware(NoCacheHTMLMiddleware)
 
 RAM_BUFFER_LIMIT = int(os.environ.get("BEAMLY_RAM_LIMIT", 512 * 1024 * 1024))  # 512 MB RAM buffer for ultra-fast Gigabit throughput
 TRANSFER_TTL_SECONDS = 300  # 5 minutes
-HEARTBEAT_INTERVAL = 4
-HEARTBEAT_TIMEOUT = 12
+HEARTBEAT_INTERVAL = 6
+HEARTBEAT_TIMEOUT = 30
 UPLOAD_CHUNK_SIZE = int(os.environ.get("BEAMLY_CHUNK_SIZE", 8 * 1024 * 1024))  # 8 MB high-speed streaming chunk buffer
 PROGRESS_BROADCAST_INTERVAL = float(os.environ.get("BEAMLY_PROGRESS_INTERVAL", 0.35))  # 350ms: optimal Wi-Fi airtime balance
 
@@ -118,20 +118,45 @@ class ConnectionManager:
         asyncio.create_task(self.broadcast({"type": "PEER_STATUS", "ip": client_ip, "status": "online"}, exclude_ip=client_ip))
 
     def disconnect(self, client_ip: str, websocket: Optional[WebSocket] = None) -> None:
-        if websocket is not None and self.active_connections.get(client_ip) is not websocket:
-            return
-        self.active_connections.pop(client_ip, None)
         clean_ip = client_ip.replace("::ffff:", "")
+        current_ws = self.active_connections.get(client_ip)
+        if current_ws is None:
+            for ip, conn in list(self.active_connections.items()):
+                if ip.replace("::ffff:", "") == clean_ip:
+                    current_ws = conn
+                    client_ip = ip
+                    break
+        if websocket is not None and current_ws is not websocket:
+            return
+        ws = self.active_connections.pop(client_ip, None)
         self.connection_locks.pop(clean_ip, None)
+        if ws is not None:
+            try:
+                asyncio.create_task(ws.close())
+            except Exception:
+                pass
         if client_ip in self.peer_info:
             self.peer_info[client_ip]["online"] = False
             self.peer_info[client_ip]["offline_since"] = time.time()
         asyncio.create_task(self.broadcast({"type": "PEER_STATUS", "ip": client_ip, "status": "offline"}))
 
     def record_activity(self, client_ip: str) -> None:
-        if client_ip in self.peer_info:
-            self.peer_info[client_ip]["last_seen"] = time.time()
-            self.peer_info[client_ip]["online"] = True
+        clean_ip = client_ip.replace("::ffff:", "")
+        now = time.time()
+        found = False
+        for ip, info in self.peer_info.items():
+            if ip == client_ip or ip.replace("::ffff:", "") == clean_ip:
+                info["last_seen"] = now
+                info["online"] = True
+                found = True
+        if not found and client_ip in self.active_connections:
+            self.peer_info[client_ip] = {
+                "ip": client_ip,
+                "online": True,
+                "connected_at": now,
+                "last_seen": now,
+                "offline_since": None,
+            }
 
     def _find_connection(self, client_ip: str) -> Optional[WebSocket]:
         ws = self.active_connections.get(client_ip)
@@ -179,7 +204,7 @@ class ConnectionManager:
 
             # Prune peers that have been offline for more than 45 seconds
             for ip, info in list(self.peer_info.items()):
-                if not info["online"]:
+                if not info.get("online"):
                     off_since = info.get("offline_since") or now
                     if (now - off_since) > 45:
                         self.peer_info.pop(ip, None)
@@ -348,6 +373,9 @@ async def websocket_endpoint(websocket: WebSocket, client_ip: str) -> None:
             manager.record_activity(client_ip)
             if message == "PONG":
                 continue
+            if message == "PING":
+                await manager.send(client_ip, {"type": "PONG"})
+                continue
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -359,9 +387,13 @@ async def websocket_endpoint(websocket: WebSocket, client_ip: str) -> None:
 @app.get("/api/peers")
 async def get_local_peers(request: Request) -> dict:
     caller_ip = request.client.host if request.client else None
+    clean_caller = caller_ip.replace("::ffff:", "") if caller_ip else ""
+    if clean_caller:
+        manager.record_activity(clean_caller)
     result = []
     for ip, info in manager.peer_info.items():
-        if ip == caller_ip:
+        clean_peer = ip.replace("::ffff:", "")
+        if clean_peer and clean_peer == clean_caller:
             continue
         result.append({
             "ip": ip,

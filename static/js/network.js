@@ -65,7 +65,12 @@
 
   function handleMessage(msg) {
     if (msg.type === "PING") {
-      if (WS.socket && WS.socket.readyState === WebSocket.OPEN) WS.socket.send("PONG");
+      if (WS.socket && WS.socket.readyState === WebSocket.OPEN) {
+        try { WS.socket.send("PONG"); } catch (_) {}
+      }
+      return;
+    }
+    if (msg.type === "PONG") {
       return;
     }
     if (msg.type === "PEER_STATUS") {
@@ -764,6 +769,30 @@
     }
     connectWS();
     setInterval(refreshPeers, 2000);
+
+    // Keepalive pulse every 8s prevents idle timeouts across desktop & mobile browsers
+    setInterval(() => {
+      if (WS.socket && WS.socket.readyState === WebSocket.OPEN) {
+        try { WS.socket.send("PONG"); } catch (_) {}
+      }
+    }, 8000);
+
+    // Auto-recover immediately when tab is refocused or device wakes up
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        if (!WS.socket || WS.socket.readyState !== WebSocket.OPEN) {
+          connectWS();
+        } else {
+          try { WS.socket.send("PONG"); } catch (_) {}
+          refreshNow();
+        }
+      }
+    });
+
+    window.addEventListener("online", () => {
+      connectWS();
+      refreshNow();
+    });
   }
 
   window.Beamly.net = { sendAll, refreshNow };
