@@ -47,6 +47,17 @@
     progressRing: $("progressRing"),
     progressCancelBtn: $("progressCancelBtn"),
     progressCancelAction: $("progressCancelAction"),
+    btnOpenQrModal: $("btnOpenQrModal"),
+    qrModal: $("qrModal"),
+    qrModalCloseBtn: $("qrModalCloseBtn"),
+    qrCodeContainer: $("qrCodeContainer"),
+    qrUrlText: $("qrUrlText"),
+    qrCopyBtn: $("qrCopyBtn"),
+    qrCopyLabel: $("qrCopyLabel"),
+    connLostModal: $("connLostModal"),
+    connLostMsg: $("connLostMsg"),
+    connLostDismissBtn: $("connLostDismissBtn"),
+    connLostStatusText: $("connLostStatusText"),
   };
 
   const fmtBytes = (bytes) => {
@@ -131,7 +142,7 @@
     const ctx = getAudioContext();
     if (!ctx) return null;
     if (ctx.state === "suspended" || ctx.state === "interrupted") {
-      ctx.resume().catch(() => {});
+      ctx.resume().catch(() => { });
     }
     return ctx;
   }
@@ -161,7 +172,7 @@
           navigator.vibrate([25]); // Light tactile tick
           break;
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   /* One-time mobile audio priming: plays a silent 1-sample buffer during a user gesture
@@ -170,7 +181,7 @@
     const ctx = getAudioContext();
     if (!ctx) return;
     if (ctx.state === "suspended" || ctx.state === "interrupted") {
-      ctx.resume().catch(() => {});
+      ctx.resume().catch(() => { });
     }
     if (!isAudioUnlocked) {
       try {
@@ -180,7 +191,7 @@
         source.connect(ctx.destination);
         source.start(0);
         isAudioUnlocked = true;
-      } catch (_) {}
+      } catch (_) { }
     }
   }
 
@@ -372,12 +383,12 @@
     // Re-wake audio context when browser tab is refocused
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && audioCtx && (audioCtx.state === "suspended" || audioCtx.state === "interrupted")) {
-        audioCtx.resume().catch(() => {});
+        audioCtx.resume().catch(() => { });
       }
     });
     window.addEventListener("focus", () => {
       if (audioCtx && (audioCtx.state === "suspended" || audioCtx.state === "interrupted")) {
-        audioCtx.resume().catch(() => {});
+        audioCtx.resume().catch(() => { });
       }
     });
   }
@@ -433,7 +444,7 @@
   function initTabs() {
     const tS = $("tabSend"), tR = $("tabReceive");
     if (!tS || !tR) return;
-    try { localStorage.removeItem("beamly-mode"); } catch (_) {}
+    try { localStorage.removeItem("beamly-mode"); } catch (_) { }
     tS.addEventListener("click", () => setMode("send", "right"));
     tR.addEventListener("click", () => setMode("receive", "left"));
     setMode("send");
@@ -869,10 +880,15 @@
     $("declineBtn").onclick = interactive ? decline : null;
 
     startToastCountdown(timeout);
-    // Premium sound when any notification/request appears
+    // Sound when a new notification/request appears
     playChime(interactive ? "incoming" : "notice");
-    // Auto-dismiss: info notices just slide out; unanswered requests decline.
-    toastTimer = setTimeout(() => { decline(); }, timeout);
+    // Auto-dismiss: notices and prompts slide out silently without audio interruption
+    toastTimer = setTimeout(() => {
+      hideToast();
+      if (interactive && onDecline) {
+        onDecline();
+      }
+    }, timeout);
   }
 
   function hideToast(immediate = false) {
@@ -916,7 +932,7 @@
     hideToast(true);
     playChime("cancel");
     if (typeof onCancelTransferCallback === "function") {
-      try { onCancelTransferCallback(); } catch (_) {}
+      try { onCancelTransferCallback(); } catch (_) { }
     }
     hideProgress();
   }
@@ -1009,8 +1025,122 @@
       ui.progressCancelAction.addEventListener("click", cancelCurrentTransfer);
     }
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && ui.progressOverlay && !ui.progressOverlay.classList.contains("hidden")) {
-        cancelCurrentTransfer();
+      if (e.key === "Escape") {
+        if (ui.progressOverlay && !ui.progressOverlay.classList.contains("hidden")) {
+          cancelCurrentTransfer();
+        }
+        hideQrModal();
+        hideConnectionLostModal();
+      }
+    });
+  }
+
+  /* ---- QR Code Fast Connect Modal ---- */
+  function getAppAccessUrl() {
+    const rawIp = state.myIp;
+    const isLocalhost = !rawIp || rawIp === "0.0.0.0" || rawIp === "127.0.0.1" || rawIp === "localhost";
+    const host = isLocalhost ? (location.hostname || "localhost") : rawIp;
+    const port = location.port ? `:${location.port}` : ":8000";
+    return `${location.protocol}//${host}${port}`;
+  }
+
+  function showQrModal() {
+    if (!ui.qrModal) return;
+    const url = getAppAccessUrl();
+    if (ui.qrUrlText) ui.qrUrlText.textContent = url;
+    if (ui.qrCodeContainer && window.BeamlyQR) {
+      window.BeamlyQR.renderTo(ui.qrCodeContainer, url, { width: 180, margin: 2 });
+    }
+    ui.qrModal.classList.remove("hidden");
+    if (ui.btnOpenQrModal) ui.btnOpenQrModal.setAttribute("aria-expanded", "true");
+  }
+
+  function hideQrModal() {
+    if (!ui.qrModal) return;
+    ui.qrModal.classList.add("hidden");
+    if (ui.btnOpenQrModal) ui.btnOpenQrModal.setAttribute("aria-expanded", "false");
+  }
+
+  function initQrModal() {
+    if (ui.btnOpenQrModal) {
+      ui.btnOpenQrModal.addEventListener("click", showQrModal);
+    }
+    if (ui.qrModalCloseBtn) {
+      ui.qrModalCloseBtn.addEventListener("click", hideQrModal);
+    }
+    if (ui.qrModal) {
+      ui.qrModal.addEventListener("click", (e) => {
+        if (e.target === ui.qrModal) hideQrModal();
+      });
+    }
+    if (ui.qrCopyBtn) {
+      let copyResetTimer = null;
+      ui.qrCopyBtn.addEventListener("click", async () => {
+        const url = getAppAccessUrl();
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+          } else {
+            const ta = document.createElement("textarea");
+            ta.value = url;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          ui.qrCopyBtn.classList.add("copied");
+          if (ui.qrCopyLabel) ui.qrCopyLabel.textContent = "Copied!";
+          showToast("Access link copied to clipboard");
+          triggerHaptic(20);
+        } catch (_) {
+          showToast(`URL: ${url}`);
+        }
+        clearTimeout(copyResetTimer);
+        copyResetTimer = setTimeout(() => {
+          ui.qrCopyBtn.classList.remove("copied");
+          if (ui.qrCopyLabel) ui.qrCopyLabel.textContent = "Copy";
+        }, 2200);
+      });
+    }
+  }
+
+  /* ---- Connection Lost Modal ---- */
+  function showConnectionLostModal(customMsg = null) {
+    if (!ui.connLostModal) return;
+    if (customMsg && ui.connLostMsg) {
+      ui.connLostMsg.textContent = customMsg;
+    }
+    const pill = ui.connLostModal.querySelector(".conn-lost-state-pill");
+    if (pill) pill.classList.remove("is-reconnected");
+    if (ui.connLostStatusText) {
+      ui.connLostStatusText.textContent = "Offline · Waiting for Wi-Fi reconnection";
+    }
+    ui.connLostModal.classList.remove("hidden");
+    // playChime("cancel");
+    triggerHaptic([30, 40, 30]);
+  }
+
+  function hideConnectionLostModal() {
+    if (!ui.connLostModal) return;
+    ui.connLostModal.classList.add("hidden");
+  }
+
+  function initConnectionLostModal() {
+    if (ui.connLostDismissBtn) {
+      ui.connLostDismissBtn.addEventListener("click", hideConnectionLostModal);
+    }
+    if (ui.connLostModal) {
+      ui.connLostModal.addEventListener("click", (e) => {
+        if (e.target === ui.connLostModal) hideConnectionLostModal();
+      });
+    }
+    window.addEventListener("online", () => {
+      if (ui.connLostModal && !ui.connLostModal.classList.contains("hidden")) {
+        const pill = ui.connLostModal.querySelector(".conn-lost-state-pill");
+        if (pill) pill.classList.add("is-reconnected");
+        if (ui.connLostStatusText) {
+          ui.connLostStatusText.textContent = "Reconnected! Ready to beam";
+        }
       }
     });
   }
@@ -1033,6 +1163,8 @@
       initDropzone();
       initTabs();
       initProgressOverlay();
+      initQrModal();
+      initConnectionLostModal();
       setStatus("connecting");
       updateSteps();
       const rescan = $("rescanBtn");
@@ -1053,12 +1185,19 @@
     setMyIp(ip) {
       state.myIp = ip;
       ui.myIp.textContent = ip;
+      if (ui.qrUrlText && ui.qrModal && !ui.qrModal.classList.contains("hidden")) {
+        showQrModal();
+      }
     },
     showToast,
     hideToast,
     showProgress,
     setProgress,
     hideProgress,
+    showQrModal,
+    hideQrModal,
+    showConnectionLostModal,
+    hideConnectionLostModal,
     setSending(on) {
       state.sending = on;
       ui.dockSendBtn.disabled = on;

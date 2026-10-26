@@ -42,7 +42,7 @@
       },
     };
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=58" />
+  <link rel="stylesheet" href="css/styles.css?v=61" />
 </head>
 
 <body class="font-sans" data-mode="send">
@@ -100,13 +100,31 @@
       <p class="hero-sub">Same Wi-Fi. Zero install.</p>
     </header>
 
-    <!-- Slim identity strip -->
-    <section class="identity glass anim-rise" aria-label="This device">
-      <span class="device-dot" aria-hidden="true"></span>
-      <span class="identity-label">This device</span>
-      <span id="myIp" class="identity-ip">—</span>
-      <span class="self-chip">You</span>
-    </section>
+    <!-- Slim identity strip & Desktop QR Fast Connect -->
+    <div class="identity-bar-wrap anim-rise">
+      <section class="identity glass" aria-label="This device">
+        <span class="device-dot" aria-hidden="true"></span>
+        <span class="identity-label">This device</span>
+        <span id="myIp" class="identity-ip">—</span>
+        <span class="self-chip">You</span>
+      </section>
+
+      <!-- Desktop-only QR Code fast open trigger -->
+      <button id="btnOpenQrModal" class="btn-qr-connect glass desktop-only" type="button" aria-haspopup="dialog" aria-expanded="false" title="Scan QR Code to open Beamly on mobile">
+        <svg class="qr-btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="14" y="14" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+          <line x1="7" y1="7" x2="7.01" y2="7"></line>
+          <line x1="17" y1="7" x2="17.01" y2="7"></line>
+          <line x1="7" y1="17" x2="7.01" y2="7"></line>
+          <line x1="17" y1="17" x2="17.01" y2="7"></line>
+        </svg>
+        <span class="qr-btn-text">Connect Mobile</span>
+        <span class="qr-pill-badge" aria-hidden="true">QR</span>
+      </button>
+    </div>
 
     <!-- Segmented mode toggle with premium icons -->
     <div class="mode-tabs anim-rise" role="tablist" aria-label="Mode">
@@ -343,8 +361,95 @@
     </div>
   </div>
 
-  <script src="js/app.js?v=58"></script>
-  <script src="js/network.js?v=58"></script>
+  <!-- QR Code Fast Connect Modal (Desktop only) -->
+  <div id="qrModal" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle">
+    <div class="glass modal-card qr-card" role="document">
+      <div class="modal-header">
+        <div class="flex items-center gap-2.5">
+          <div class="qr-header-icon-wrap" aria-hidden="true">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+              <line x1="12" y1="18" x2="12.01" y2="18"></line>
+            </svg>
+          </div>
+          <div>
+            <h2 id="qrModalTitle" class="modal-title font-display">Connect Mobile Device</h2>
+            <p class="modal-subtitle">Same Wi-Fi · Instant browser access</p>
+          </div>
+        </div>
+        <button id="qrModalCloseBtn" class="progress-close-btn" type="button" aria-label="Close QR Modal" title="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Illuminated QR Container -->
+      <div class="qr-preview-box">
+        <div class="qr-glow-ambient" aria-hidden="true"></div>
+        <div id="qrCodeContainer" class="qr-code-holder" aria-label="QR Code for Beamly mobile access"></div>
+      </div>
+
+      <!-- Actionable Link Pill with One-Click Copy -->
+      <div class="qr-link-box">
+        <span class="qr-url-icon" aria-hidden="true">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+          </svg>
+        </span>
+        <span id="qrUrlText" class="qr-url-text select-all truncate">http://0.0.0.0:8000</span>
+        <button id="qrCopyBtn" class="btn-copy-url" type="button" aria-label="Copy address to clipboard" title="Copy address">
+          <svg id="qrCopyIcon" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          <span id="qrCopyLabel">Copy</span>
+        </button>
+      </div>
+
+      <p class="qr-helper-tip">
+        Scan this QR code with your mobile camera on the same Wi-Fi network to open Beamly immediately.
+      </p>
+    </div>
+  </div>
+
+  <!-- Network Connection Lost Modal -->
+  <div id="connLostModal" class="overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="connLostTitle" aria-describedby="connLostMsg">
+    <div class="glass modal-card conn-lost-card" role="document">
+      <div class="conn-lost-icon-wrap" aria-hidden="true">
+        <div class="conn-lost-halo"></div>
+        <svg class="conn-lost-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="1" y1="1" x2="23" y2="23"></line>
+          <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+          <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+          <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+          <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+          <line x1="12" y1="20" x2="12.01" y2="20"></line>
+        </svg>
+      </div>
+
+      <h2 id="connLostTitle" class="modal-title font-display text-lg mt-3">Connection Lost</h2>
+      <p id="connLostMsg" class="modal-desc text-sm mt-2 text-muted">
+        Your Wi-Fi or network connection was disconnected during the beaming process. The transfer has been safely stopped to protect your data.
+      </p>
+
+      <div class="conn-lost-state-pill mt-3">
+        <span class="conn-lost-status-dot"></span>
+        <span id="connLostStatusText">Offline · Waiting for Wi-Fi reconnection</span>
+      </div>
+
+      <div class="modal-actions mt-5 flex gap-2">
+        <button id="connLostDismissBtn" class="btn-primary flex-1" type="button">Got It</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/qr.js?v=61"></script>
+  <script src="js/app.js?v=61"></script>
+  <script src="js/network.js?v=61"></script>
 </body>
 
 </html>

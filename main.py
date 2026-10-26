@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import io
+import mimetypes
 import os
+import re
 import tempfile
 import time
 import uuid
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import ClientDisconnect
 from starlette.websockets import WebSocketState
 from urllib.parse import quote
@@ -21,15 +22,32 @@ from pydantic import BaseModel
 app = FastAPI(title="Beamly Engine", version="1.0.0")
 
 
-class NoCacheHTMLMiddleware(BaseHTTPMiddleware):
+class NoCacheHTMLMiddleware:
     """Never let browsers cache index.html — CSS/JS carry ?v= cache busters,
-    so a fresh HTML document guarantees a fresh UI."""
+    so a fresh HTML document guarantees a fresh UI.
+    Pure ASGI middleware avoids wrapping HTTP request bodies in AnyIO memory streams,
+    preventing CancelledError / 500 exceptions on client disconnect during file uploads."""
 
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        if request.url.path in ("/", "/index.html"):
-            response.headers["Cache-Control"] = "no-store, must-revalidate"
-        return response
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if path in ("/", "/index.html"):
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.append((b"cache-control", b"no-store, must-revalidate"))
+                    message["headers"] = headers
+                await send(message)
+
+            await self.app(scope, receive, send_wrapper)
+        else:
+            await self.app(scope, receive, send)
 
 
 app.add_middleware(NoCacheHTMLMiddleware)
@@ -78,6 +96,7 @@ class CancelTransferRequest(BaseModel):
     transfer_id: Optional[str] = None
     sender_ip: Optional[str] = None
     target_ip: Optional[str] = None
+    reason: Optional[str] = None
 
 
 async def _safe_close_websocket(ws: Optional[WebSocket]) -> None:
@@ -143,10 +162,74 @@ class ConnectionManager:
         self.connection_locks.pop(clean_ip, None)
         if ws is not None:
             asyncio.create_task(_safe_close_websocket(ws))
+        clean_client_ip = client_ip.replace("::ffff:", "")
         if client_ip in self.peer_info:
             self.peer_info[client_ip]["online"] = False
             self.peer_info[client_ip]["offline_since"] = time.time()
-        asyncio.create_task(self.broadcast({"type": "PEER_STATUS", "ip": client_ip, "status": "offline"}))
+        asyncio.create_task(self.broadcast({"type": "PEER_STATUS", "ip": clean_client_ip, "status": "offline"}))
+
+        # Notify counterpart peer if client was in an active transfer batch
+        for b_id, b_data in list(store._batches.items()):
+            s_ip = (b_data.get("sender_ip") or "").replace("::ffff:", "")
+            t_ip = (b_data.get("target_ip") or "").replace("::ffff:", "")
+            if s_ip == clean_client_ip and t_ip:
+                asyncio.create_task(
+                    self.send(
+                        t_ip,
+                        {
+                            "type": "TRANSFER_CANCELLED",
+                            "batch_id": b_id,
+                            "sender_ip": s_ip,
+                            "reason": "connection_lost",
+                        },
+                    )
+                )
+                store._batches.pop(b_id, None)
+            elif t_ip == clean_client_ip and s_ip:
+                asyncio.create_task(
+                    self.send(
+                        s_ip,
+                        {
+                            "type": "TRANSFER_CANCELLED",
+                            "batch_id": b_id,
+                            "target_ip": t_ip,
+                            "reason": "connection_lost",
+                        },
+                    )
+                )
+                store._batches.pop(b_id, None)
+
+        # Notify counterpart peer if client was in an individual active transfer
+        for t_id, t_data in list(store._transfers.items()):
+            if t_data.get("status") in ("requested", "accepted"):
+                s_ip = (t_data.get("sender_ip") or "").replace("::ffff:", "")
+                t_ip = (t_data.get("target_ip") or "").replace("::ffff:", "")
+                if s_ip == clean_client_ip and t_ip:
+                    asyncio.create_task(
+                        self.send(
+                            t_ip,
+                            {
+                                "type": "TRANSFER_CANCELLED",
+                                "transfer_id": t_id,
+                                "sender_ip": s_ip,
+                                "reason": "connection_lost",
+                            },
+                        )
+                    )
+                    store._release(t_id)
+                elif t_ip == clean_client_ip and s_ip:
+                    asyncio.create_task(
+                        self.send(
+                            s_ip,
+                            {
+                                "type": "TRANSFER_CANCELLED",
+                                "transfer_id": t_id,
+                                "target_ip": t_ip,
+                                "reason": "connection_lost",
+                            },
+                        )
+                    )
+                    store._release(t_id)
 
     def record_activity(self, client_ip: str) -> None:
         clean_ip = client_ip.replace("::ffff:", "")
@@ -329,15 +412,37 @@ store = EphemeralTransferStore()
 
 
 def _sanitize_filename(filename: str) -> str:
-    cleaned = "".join(ch for ch in filename if ch not in ('"', "'", "\r", "\n", "\\"))
-    return cleaned or "beamly-transfer.bin"
+    clean_name = os.path.basename(filename).strip()
+    clean_name = re.sub(r'[\r\n\t"\'\\/]', '', clean_name)
+    return clean_name or "download"
 
 
 def _content_disposition(filename: str) -> str:
-    return (
-        "attachment; filename=\"transfer.bin\"; "
-        f"filename*=UTF-8''{quote(_sanitize_filename(filename))}"
-    )
+    clean_name = _sanitize_filename(filename)
+    base, ext = os.path.splitext(clean_name)
+    ext = re.sub(r'[^a-zA-Z0-9._-]', '', ext)
+
+    has_letters = bool(re.search(r'[a-zA-Z0-9]{2,}', base))
+    if has_letters:
+        ascii_base = re.sub(r'[^a-zA-Z0-9_-]', '', base).strip('_ -')
+        if not ascii_base:
+            ascii_base = "beamly-file"
+    else:
+        ascii_base = "beamly-file"
+    ascii_filename = f"{ascii_base}{ext}" if ext else f"{ascii_base}.bin"
+
+    encoded_name = quote(clean_name, safe='')
+
+    try:
+        clean_name.encode('ascii')
+        is_pure_ascii = True
+    except UnicodeEncodeError:
+        is_pure_ascii = False
+
+    if is_pure_ascii:
+        return f'attachment; filename="{clean_name}"; filename*=UTF-8\'\'{encoded_name}'
+    else:
+        return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_name}'
 
 
 async def _notify_upload_complete(transfer_id: str) -> None:
@@ -436,10 +541,12 @@ async def request_transfer(payload: TransferRequest) -> dict:
         raise HTTPException(status_code=400, detail="Invalid file size")
 
     transfer_id = f"{uuid.uuid4().hex[:12]}"
+    guessed_type, _ = mimetypes.guess_type(payload.file_name)
+    resolved_type = payload.file_type or guessed_type or "application/octet-stream"
     store.create(
         transfer_id,
         payload.file_name,
-        payload.file_type or "application/octet-stream",
+        resolved_type,
         payload.file_size,
     )
     store.set_ips(transfer_id, payload.sender_ip, payload.target_ip)
@@ -452,7 +559,7 @@ async def request_transfer(payload: TransferRequest) -> dict:
             "sender_ip": payload.sender_ip,
             "file_name": payload.file_name,
             "file_size": payload.file_size,
-            "file_type": payload.file_type,
+            "file_type": resolved_type,
         },
     )
     if not delivered:
@@ -511,14 +618,16 @@ async def request_batch_transfer(payload: BatchTransferRequest) -> dict:
     transfer_ids = []
     for f in payload.files:
         t_id = f"{uuid.uuid4().hex[:12]}"
-        store.create(t_id, f.name, f.type or "application/octet-stream", f.size)
+        guessed_type, _ = mimetypes.guess_type(f.name)
+        resolved_type = f.type or guessed_type or "application/octet-stream"
+        store.create(t_id, f.name, resolved_type, f.size)
         store.set_ips(t_id, payload.sender_ip, payload.target_ip)
         transfer_ids.append(t_id)
         file_metas.append({
             "transfer_id": t_id,
             "file_name": f.name,
             "file_size": f.size,
-            "file_type": f.type,
+            "file_type": resolved_type,
         })
     store.register_batch(batch_id, payload.sender_ip, payload.target_ip, transfer_ids)
 
@@ -611,17 +720,19 @@ async def cancel_transfer(payload: CancelTransferRequest) -> dict:
             sender_ip = sender_ip or entry.get("sender_ip")
             store._release(payload.transfer_id)
 
-    # Immediately signal target peer to dismiss their incoming notification prompt
+    # Immediately signal target and sender peers to dismiss incoming notification / progress
+    reason = payload.reason or "cancelled"
+    cancel_msg = {
+        "type": "TRANSFER_CANCELLED",
+        "batch_id": payload.batch_id,
+        "transfer_id": payload.transfer_id,
+        "sender_ip": sender_ip,
+        "reason": reason,
+    }
     if target_ip:
-        await manager.send(
-            target_ip,
-            {
-                "type": "TRANSFER_CANCELLED",
-                "batch_id": payload.batch_id,
-                "transfer_id": payload.transfer_id,
-                "sender_ip": sender_ip,
-            },
-        )
+        await manager.send(target_ip, cancel_msg)
+    if sender_ip and sender_ip != target_ip:
+        await manager.send(sender_ip, cancel_msg)
 
     return {"status": "cancelled"}
 
@@ -629,30 +740,40 @@ async def cancel_transfer(payload: CancelTransferRequest) -> dict:
 @app.post("/api/transfer/upload/{transfer_id}")
 async def upload_stream(transfer_id: str, request: Request) -> dict:
     entry = store.get(transfer_id)
-    if entry is None:
-        return {"status": "cancelled", "transfer_id": transfer_id}
-    if entry.get("status") == "cancelled":
+    if entry is None or entry.get("status") == "cancelled":
         return {"status": "cancelled", "transfer_id": transfer_id}
     if entry["status"] not in ("requested", "accepted"):
-        raise HTTPException(status_code=409, detail="Transfer is not accepting uploads")
+        return {"status": "cancelled", "transfer_id": transfer_id}
 
     buffer = store.open_buffer(transfer_id)
     if buffer is None:
         return {"status": "cancelled", "transfer_id": transfer_id}
 
+    if await request.is_disconnected():
+        store._release(transfer_id)
+        return {"status": "cancelled", "transfer_id": transfer_id}
+
     written = 0
     target_ip = entry.get("target_ip")
+    sender_ip = entry.get("sender_ip")
     total_size = entry.get("size", 0)
     file_name = entry.get("filename", "")
     last_progress_time = 0.0
     progress_task: Optional[asyncio.Task] = None
 
+    # Resolve associated batch_id if this transfer belongs to a batch
+    batch_id = None
+    for b_id, b_data in list(store._batches.items()):
+        if transfer_id in b_data.get("transfer_ids", []):
+            batch_id = b_id
+            break
+
     try:
         now = time.time()
         if target_ip:
             manager.record_activity(target_ip)
-        if entry.get("sender_ip"):
-            manager.record_activity(entry["sender_ip"])
+        if sender_ip:
+            manager.record_activity(sender_ip)
 
         content_type = request.headers.get("content-type", "")
         if content_type.startswith("multipart/form-data"):
@@ -738,14 +859,22 @@ async def upload_stream(transfer_id: str, request: Request) -> dict:
                     },
                 )
             await _notify_upload_complete(transfer_id)
-    except (ClientDisconnect, asyncio.CancelledError):
+    except (ClientDisconnect, asyncio.CancelledError, ConnectionResetError, Exception) as exc:
         store._release(transfer_id)
+        if target_ip:
+            asyncio.create_task(
+                manager.send(
+                    target_ip,
+                    {
+                        "type": "TRANSFER_CANCELLED",
+                        "batch_id": batch_id,
+                        "transfer_id": transfer_id,
+                        "sender_ip": sender_ip,
+                        "reason": "connection_lost",
+                    },
+                )
+            )
         return {"status": "cancelled", "transfer_id": transfer_id}
-    except Exception:
-        store._release(transfer_id)
-        if entry.get("status") == "cancelled":
-            return {"status": "cancelled", "transfer_id": transfer_id}
-        raise HTTPException(status_code=500, detail="Upload failed")
     finally:
         if entry.get("spooled") and buffer:
             try:
@@ -757,14 +886,15 @@ async def upload_stream(transfer_id: str, request: Request) -> dict:
 
 
 @app.get("/api/transfer/download/{transfer_id}")
-async def download_stream(transfer_id: str) -> StreamingResponse:
+@app.get("/api/transfer/download/{transfer_id}/{filename:path}")
+async def download_stream(transfer_id: str, filename: Optional[str] = None) -> StreamingResponse:
     entry = store.download(transfer_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Transfer expired or already downloaded")
 
     sender_ip = entry.get("sender_ip")
     target_ip = entry.get("target_ip")
-    filename = entry.get("filename", "file")
+    actual_filename = entry.get("filename", "file")
 
     async def file_iterator():
         try:
@@ -788,7 +918,7 @@ async def download_stream(transfer_id: str) -> StreamingResponse:
             delivered_payload = {
                 "type": "TRANSFER_DELIVERED",
                 "transfer_id": transfer_id,
-                "file_name": filename,
+                "file_name": actual_filename,
             }
             coros = []
             if sender_ip:
@@ -805,9 +935,14 @@ async def download_stream(transfer_id: str) -> StreamingResponse:
         finally:
             store._cleanup(entry)
 
+    media_type = entry.get("content_type")
+    if not media_type or media_type == "application/octet-stream":
+        guessed, _ = mimetypes.guess_type(entry.get("filename", ""))
+        media_type = guessed or "application/octet-stream"
+
     return StreamingResponse(
         file_iterator(),
-        media_type=entry["content_type"],
+        media_type=media_type,
         headers={
             "Content-Disposition": _content_disposition(entry["filename"]),
             "Content-Length": str(entry["size"]),

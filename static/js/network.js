@@ -54,6 +54,28 @@
       WS.socket = null;
       app().setStatus("offline");
       if (app().markAllPeersOffline) app().markAllPeersOffline();
+
+      const isReceiverBusy = !!activeReceiveBatch || (app().ui.progressOverlay && !app().ui.progressOverlay.classList.contains("hidden") && !app().state.sending);
+      if (app().state && app().state.sending) {
+        handleConnectionLostDuringTransfer(
+          "Network connection to the server was lost during beaming. The transfer has been safely stopped."
+        );
+      } else if (isReceiverBusy) {
+        if (receiverCompleteTimer) {
+          clearTimeout(receiverCompleteTimer);
+          receiverCompleteTimer = null;
+        }
+        if (receiverSafetyTimer) {
+          clearTimeout(receiverSafetyTimer);
+          receiverSafetyTimer = null;
+        }
+        activeReceiveBatch = null;
+        app().hideProgress();
+        app().showConnectionLostModal(
+          "Network connection to the server was lost while receiving files. The transfer was stopped. Please reconnect to your Wi-Fi."
+        );
+      }
+
       setTimeout(connectWS, WS.retryDelay);
       WS.retryDelay = Math.min(WS.retryDelay * 1.5, 15000);
     };
@@ -74,6 +96,25 @@
       return;
     }
     if (msg.type === "PEER_STATUS") {
+      if (msg.status === "offline") {
+        const isReceivingFromPeer = activeReceiveBatch && (activeReceiveBatch.sender_ip === msg.ip);
+        if (isReceivingFromPeer) {
+          if (receiverCompleteTimer) {
+            clearTimeout(receiverCompleteTimer);
+            receiverCompleteTimer = null;
+          }
+          if (receiverSafetyTimer) {
+            clearTimeout(receiverSafetyTimer);
+            receiverSafetyTimer = null;
+          }
+          const sIp = activeReceiveBatch.sender_ip;
+          activeReceiveBatch = null;
+          app().hideProgress();
+          app().showConnectionLostModal(
+            `Sender device ${sIp} lost connection. The transfer has been safely stopped.`
+          );
+        }
+      }
       refreshNow();
       return;
     }
@@ -124,6 +165,9 @@
         clearTimeout(receiverSafetyTimer);
         receiverSafetyTimer = null;
       }
+      const wasReceiving = !!activeReceiveBatch || (app().ui.progressOverlay && !app().ui.progressOverlay.classList.contains("hidden") && !app().state.sending);
+      const isConnLost = msg.reason === "connection_lost";
+      const senderIp = msg.sender_ip || (activeReceiveBatch && activeReceiveBatch.sender_ip) || "sender";
       activeReceiveBatch = null;
       app().playChime("cancel");
       app().hideToast(true);
@@ -132,6 +176,15 @@
       if (msg.transfer_id) {
         resolvePending(msg.transfer_id, false);
         resolveDelivery(msg.transfer_id);
+      }
+      if (wasReceiving) {
+        if (isConnLost) {
+          app().showConnectionLostModal(
+            `Connection with sender device ${senderIp} was lost. The transfer has been safely stopped.`
+          );
+        } else {
+          app().showToast(`Transfer was cancelled by device ${senderIp}.`);
+        }
       }
       return;
     }
@@ -497,9 +550,11 @@
   }
 
   function onTransferReady(msg) {
+    const rawFileName = msg.file_name || "file";
+    const encodedName = encodeURIComponent(rawFileName);
     const a = document.createElement("a");
-    a.href = `/api/transfer/download/${msg.transfer_id}`;
-    a.download = msg.file_name;
+    a.href = `/api/transfer/download/${msg.transfer_id}/${encodedName}`;
+    a.download = rawFileName;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -548,9 +603,9 @@
   let activeBatchId = null;
   let activeTargetIp = null;
 
-  function cancelActiveTransfer() {
+  function cancelActiveTransfer(silent = false) {
     isTransferCancelled = true;
-    app().playChime("cancel");
+    if (!silent) app().playChime("cancel");
     if (receiverCompleteTimer) {
       clearTimeout(receiverCompleteTimer);
       receiverCompleteTimer = null;
@@ -581,6 +636,15 @@
       }).catch(() => {});
     }
     app().hideProgress();
+  }
+
+  function handleConnectionLostDuringTransfer(customReason) {
+    cancelActiveTransfer(true);
+    app().setSending(false);
+    app().hideProgress();
+    app().showConnectionLostModal(
+      customReason || "Your Wi-Fi or network connection was lost during the beaming process. The transfer has been stopped to protect your data."
+    );
   }
 
   function uploadFile(transferId, file, fileIndex = 0, totalFiles = 1) {
@@ -620,6 +684,9 @@
         activeXhr = null;
         if (isTransferCancelled) {
           reject(new Error("Transfer cancelled"));
+        } else if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          handleConnectionLostDuringTransfer("Network connection dropped during file upload. The transfer was stopped.");
+          reject(new Error("Network connection lost"));
         } else {
           reject(new Error("Network upload error"));
         }
@@ -642,6 +709,10 @@
   /* ---- Send all queued files via single batch request ---- */
   async function sendAll(targetIp) {
     if (app().state.sending || !targetIp) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      app().showConnectionLostModal("You are currently offline. Please connect to your local Wi-Fi network before beaming files.");
+      return;
+    }
     const { state } = app();
     if (!state.queue || state.queue.length === 0) return;
 
@@ -789,9 +860,35 @@
       }
     });
 
+    window.addEventListener("offline", () => {
+      app().setStatus("offline");
+      if (app().markAllPeersOffline) app().markAllPeersOffline();
+      const isReceiverBusy = !!activeReceiveBatch || (app().ui.progressOverlay && !app().ui.progressOverlay.classList.contains("hidden") && !app().state.sending);
+      if (app().state && app().state.sending) {
+        handleConnectionLostDuringTransfer(
+          "Your Wi-Fi or network connection was lost during the beaming process. The transfer has been safely stopped."
+        );
+      } else if (isReceiverBusy) {
+        if (receiverCompleteTimer) {
+          clearTimeout(receiverCompleteTimer);
+          receiverCompleteTimer = null;
+        }
+        if (receiverSafetyTimer) {
+          clearTimeout(receiverSafetyTimer);
+          receiverSafetyTimer = null;
+        }
+        activeReceiveBatch = null;
+        app().hideProgress();
+        app().showConnectionLostModal(
+          "Your Wi-Fi or network connection was lost while receiving files. The transfer was safely stopped. Please reconnect to your Wi-Fi."
+        );
+      }
+    });
+
     window.addEventListener("online", () => {
       connectWS();
       refreshNow();
+      app().showToast("Network connection restored · Back online");
     });
   }
 

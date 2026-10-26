@@ -384,7 +384,19 @@ html.dark .icon-sun {
   color: var(--muted);
 }
 
-/* ---------- Slim identity strip ---------- */
+/* ---------- Slim identity strip & Desktop QR trigger wrap ---------- */
+.identity-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.identity-bar-wrap .identity {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+
 .identity {
   display: flex;
   align-items: center;
@@ -393,6 +405,69 @@ html.dark .icon-sun {
   padding: 10px 14px;
   border-radius: 14px;
   font-size: 0.82rem;
+}
+
+.btn-qr-connect {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+}
+.btn-qr-connect:hover {
+  transform: translateY(-1.5px);
+  border-color: rgba(99, 102, 241, 0.45);
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.2), inset 0 1px 1px var(--glass-highlight);
+  color: var(--accent);
+}
+.btn-qr-connect:active {
+  transform: scale(0.97);
+}
+.qr-btn-svg {
+  width: 17px;
+  height: 17px;
+  color: var(--accent);
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
+}
+.btn-qr-connect:hover .qr-btn-svg {
+  transform: scale(1.12);
+}
+.qr-btn-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.qr-pill-badge {
+  padding: 1.5px 6px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: linear-gradient(135deg, #6366f1, #22d3ee);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+}
+
+/* Hide desktop-only controls on small devices & touchscreens */
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
+  }
+}
+@media (hover: none) and (pointer: coarse) {
+  .desktop-only {
+    display: none !important;
+  }
 }
 .device-dot {
   width: 8px;
@@ -1907,3 +1982,204 @@ html.theme-transitioning .tab {
     animation-duration: 25s !important;
   }
 }
+
+/* ---------- QR Modal & Connection Lost Modal Styling ---------- */
+.modal-card {
+  width: 100%;
+  padding: 24px;
+  border-radius: 26px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.84);
+  backdrop-filter: blur(24px) saturate(1.35);
+  -webkit-backdrop-filter: blur(24px) saturate(1.35);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  animation: progress-pop-in 0.32s cubic-bezier(0.34, 1.35, 0.64, 1) both;
+}
+html:not(.dark) .modal-card {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.8) inset;
+}
+
+.qr-card {
+  max-width: 24.5rem;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  margin-bottom: 16px;
+}
+.modal-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.modal-subtitle {
+  font-size: 0.76rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.qr-header-icon-wrap {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  flex-shrink: 0;
+}
+.qr-preview-box {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  margin: 10px auto 14px;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+  width: fit-content;
+}
+.qr-code-holder svg {
+  display: block;
+  border-radius: 8px;
+  width: 180px;
+  height: 180px;
+}
+.qr-glow-ambient {
+  position: absolute;
+  inset: -10px;
+  border-radius: 30px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.35) 0%, rgba(34, 211, 238, 0.2) 50%, transparent 75%);
+  filter: blur(14px);
+  z-index: -1;
+  pointer-events: none;
+}
+.qr-link-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--glass-border);
+  margin-top: 10px;
+}
+html.dark .qr-link-box {
+  background: rgba(255, 255, 255, 0.04);
+}
+.qr-url-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.qr-url-text {
+  flex: 1;
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--fg);
+  user-select: all;
+}
+.btn-copy-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+.btn-copy-url:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-copy-url.copied {
+  background: var(--ok);
+  color: #fff;
+  border-color: var(--ok);
+}
+.qr-helper-tip {
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--muted);
+  margin: 14px auto 0;
+  max-width: 20.5rem;
+}
+
+/* Connection Lost Modal */
+.conn-lost-card {
+  max-width: 23rem;
+  padding: 26px 22px;
+}
+.conn-lost-icon-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.conn-lost-halo {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(239, 68, 68, 0.35) 0%, transparent 70%);
+  filter: blur(8px);
+  z-index: -1;
+  animation: pulse-halo 2.5s infinite alternate;
+}
+@keyframes pulse-halo {
+  0% { transform: scale(0.92); opacity: 0.5; }
+  100% { transform: scale(1.1); opacity: 0.9; }
+}
+.conn-lost-svg {
+  width: 28px;
+  height: 28px;
+}
+.conn-lost-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+.conn-lost-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.8);
+}
+.conn-lost-state-pill.is-reconnected {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--ok);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+.conn-lost-state-pill.is-reconnected .conn-lost-status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
+}
+
